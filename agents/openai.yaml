@@ -1,4 +1,4 @@
 interface:
-  display_name: "生成月度患者用药清单"
-  short_description: "依据患者月度清单生成并严格校验用药提醒和个体化用药方案工作簿"
-  default_prompt: "使用 $generating-monthly-patient-medication-workbooks 依据患者Excel、产品类型和产品名称生成月度患者用药清单。"
+  display_name: "生成月度患者医疗清单"
+  short_description: "依据月度患者清单生成用药方案、用药提醒和产品感知不良反应工作簿"
+  default_prompt: "使用 $generating-monthly-patient-medication-workbooks 生成月度患者用药清单，或按“生成不良反应清单 依据文件：/path/file.xlsx 产品：产品名称”生成不良反应清单。"

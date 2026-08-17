@@ -120,3 +120,43 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 - `用药提醒_<产品名称>.xlsx`：每个 userid 一行。
 - `用药方案_<产品名称>.xlsx`：每个 userid 每个联合药一行。
 - 验证文件和预览只留在任务工作目录，不交付给用户，除非用户要求。
+
+## 不良反应清单契约
+
+触发文案：`生成不良反应清单 依据文件：/absolute/path/月度患者清单.xlsx 产品：产品名称`。`产品` 为必填规范名称；该工作流不要求产品类型。
+
+### 筛选范围
+
+- 只输出患者标签严格等于 `中度患者` 或 `重度患者` 的患者。
+- 其他标签患者不输出；筛选后保持原始输入顺序。
+- userid 必须逐字符保留，不新增、遗漏、改写、补齐、转号或去重。
+
+### Payload records
+
+每个 `records` 元素至少包含以下六个非空字段：
+
+```json
+{
+  "userid": "原始userid",
+  "symptomDescription": "结合患者资料和产品名称生成的观察性症状描述",
+  "severityGrade": "中度（2级）",
+  "treatmentMeasures": "供人工审核的处理措施建议",
+  "treatmentOutcome": "待随访核实的处理结果/转归",
+  "remark": "结合患者资料和产品名称生成的复核提示"
+}
+```
+
+payload 的 `meta.productName` 保存用户提供的产品名称。每条记录同时包含工作簿字段：`disease`、`occurrenceTime`、`discoveryMethod`、`medicationRelationship`、`manualIntervention`、`followupRecord`。
+
+- `中度患者` 映射为 `中度（2级）` 和人工干预 `否`。
+- `重度患者` 映射为 `重度（3级）` 和人工干预 `是`。
+- `discoveryMethod` 只能为 `AI用药随访发现` 或 `患者自评反馈`。
+- `occurrenceTime` 必须严格早于对应患者 `activateTime`。
+- `followupRecord` 默认空字符串。
+- severityGrade 是供人工审核的建议，不是最终系统等级。
+
+### 不良反应工作簿
+
+使用 `assets/adverse-reaction-template.xlsx`，保留13列表头：`序号、患者ID、疾病、不良反应发生时间、发现途径、不良反应症状描述、不良反应严重程度分级、与用药关系分析、处理措施、处理结果/转归、是否触发人工干预、关联随访记录、备注`。清除模板示例数据后按筛选结果写入；输出只包含目标标签患者。
+
+症状描述和与用药关系分析必须包含 `meta.productName`，但不得将产品与症状写成确定性因果关系。处理措施根据症状描述生成；处理结果/转归综合症状描述、关系分析和处理措施生成，并在缺少事实时保持待随访核实。不得虚构剂量、检查结果、确诊或已经发生的好转/痊愈，不得添加“结构化草案：”“人工审核草案：”等固定前缀。
