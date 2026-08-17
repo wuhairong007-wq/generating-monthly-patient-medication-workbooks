@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.work/
+outputs/
+patients.json
+payload.json
+product-profile.json
+*.xlsx
+!assets/*.xlsx
