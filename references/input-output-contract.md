@@ -70,6 +70,9 @@
               "medicationTime": "晚间",
               "treatmentDays": 30,
               "precautions": "仅在医师确认本疾病指征后启用",
+              "role": "diseaseTreatment",
+              "diseaseRationale": "该药用于当前 diseasePlan 对应疾病的治疗或风险管理",
+              "evidence": [{"title": "疾病用药依据", "url": "https://...", "scope": "该药与当前疾病的关联"}],
               "avoidIfAllergyContains": ["相关过敏关键词"]
             }
           ]
@@ -86,7 +89,7 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 每个 `diseasePlan.when` 必须包含 `diseaseEqualsAny` 或 `diseaseContainsAny`，每位患者必须且只能匹配一个疾病方案。无匹配或多匹配直接停止生成。
 
-`allowProductOnly` 必须显式填写布尔值。如未选出任何疾病方案用药，只有该值为 `true` 时允许生成当前产品单药方案。
+`allowProductOnly` 必须显式填写布尔值，用于 schema v2 兼容和器械流程判断。在 `产品类型=用药` 时，该字段不能放宽最小数量规则：每位患者的 `combinedMedication` 至少 3 种，且必须从其唯一匹配的疾病方案中选出至少 2 种疾病治疗药。直接产品辅助品不计入疾病治疗药数量；不足时停止生成。
 
 不同疾病可以在分别配置疾病方案和独立依据的前提下生成相同药品组合；不得为制造差异而任意换药。
 
@@ -107,13 +110,17 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 ```json
 {
   "userid": "原始userid",
-  "combinedMedication": ["药品1", "药品2"],
+  "combinedMedication": ["当前产品", "疾病治疗药1", "疾病治疗药2"],
   "prescriptionList": "药品1 ... + 药品2 ...",
   "surgeryName": ""
 }
 ```
 
 用药清单每行字段为：`userid、drugName、specification、singleDose、frequency、medicationTime、treatmentDays、precautions`。
+
+用药 payload 的 `meta` 必须包含 `minimumCombinedMedicationCount: 3`、`minimumDiseaseMedicationCount: 2` 和 `diseaseMedicationNamesByUserid`。后者逐 userid 记录从当前患者唯一 `diseasePlan.medicationGroups` 选出的药名，供工作簿构建和最终交付校验；复溶液、稀释液等直接产品辅助品不计入该映射。药品产品必须位于 `combinedMedication` 首项，至少 2 种疾病治疗药必须有当前疾病的独立依据并通过患者过敏/禁忌筛选。
+
+`diseasePlan.medicationGroups[].alternatives[]` 中的每个疾病治疗候选药必须声明 `role: "diseaseTreatment"`、非空 `diseaseRationale`（疾病关联理由）和非空 `evidence`（药品依据）。生成器拒绝缺少这些字段的候选药，也拒绝把 `directProductAdjunct` 角色的复溶液或稀释液放入疾病治疗药组。
 
 ## 最终输出
 

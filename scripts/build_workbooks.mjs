@@ -3,6 +3,8 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
+import { validateMedicationMinimums } from "./validate_medication_payload.mjs";
+
 const nodeModules = process.env.CODEX_NODE_MODULES;
 if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
 const runtimeRequire = createRequire(path.join(nodeModules, "package.json"));
@@ -93,6 +95,7 @@ async function formatRowsInChunks(sheet, startRowNumber, rowCount, endColumn, la
 const payload = earlyPayload;
 await progress("payload loaded");
 const { patients, records, medicationItems, meta } = payload;
+validateMedicationMinimums(payload);
 assert(["用药", "器械"].includes(meta.productType), "产品类型仅支持用药或器械");
 assert(patients.length === meta.patientCount, "患者数量与元数据不一致");
 assert(records.length === patients.length, "生成记录数量与患者数量不一致");

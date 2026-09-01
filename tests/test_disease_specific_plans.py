@@ -20,6 +20,9 @@ def medication(name, *, avoid=None, precautions=None):
         "medicationTime": "早餐后",
         "treatmentDays": 30,
         "precautions": precautions or f"{name}仅在医师确认对应疾病指征后启用",
+        "role": "diseaseTreatment",
+        "diseaseRationale": f"{name}用于当前疾病方案对应疾病的治疗或风险管理",
+        "evidence": [{"title": f"{name}疾病用药依据", "url": "https://example.test/drug", "scope": "当前疾病方案用药"}],
     }
     if avoid:
         item["avoidIfAllergyContains"] = avoid
@@ -186,7 +189,7 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         result, _ = self.run_generator([patient("u1", "脑梗死")], profile(plans))
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("未生成联合药且未允许产品单药", result.stderr)
+        self.assertIn("疾病治疗药0种，至少需要2种", result.stderr)
 
     def test_direct_product_adjunct_requires_role_and_rationale(self):
         adjunct = medication("复溶液")
@@ -200,10 +203,44 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("直接产品辅助品必须声明role和rationale", result.stderr)
 
+    def test_disease_medication_requires_role_rationale_and_evidence(self):
+        unlinked = medication("无关联元数据药")
+        unlinked.pop("role")
+        unlinked.pop("diseaseRationale")
+        unlinked.pop("evidence")
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病用药A", [unlinked]),
+            group("疾病用药B", [medication("疾病药B")]),
+        ])]
+
+        result, _ = self.run_generator([patient("u1", "脑梗死")], profile(plans))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("无关联元数据药必须声明diseaseTreatment角色、疾病关联理由和药品依据", result.stderr)
+
+    def test_direct_product_adjunct_cannot_be_used_as_disease_medication(self):
+        disguised_adjunct = medication("复溶液")
+        disguised_adjunct["role"] = "directProductAdjunct"
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("伪装疾病药", [disguised_adjunct]),
+            group("疾病用药B", [medication("疾病药B")]),
+        ])]
+
+        result, _ = self.run_generator([patient("u1", "脑梗死")], profile(plans))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("复溶液必须声明diseaseTreatment角色", result.stderr)
+
     def test_each_disease_uses_its_own_plan(self):
         plans = [
-            disease_plan("脑梗死方案", ["脑梗死"], [group("卒中用药", [medication("脑梗死候选药")])]),
-            disease_plan("冠心病心绞痛方案", ["冠心病心绞痛"], [group("冠心病用药", [medication("冠心病候选药")])]),
+            disease_plan("脑梗死方案", ["脑梗死"], [
+                group("卒中用药A", [medication("脑梗死候选药A")]),
+                group("卒中用药B", [medication("脑梗死候选药B")]),
+            ]),
+            disease_plan("冠心病心绞痛方案", ["冠心病心绞痛"], [
+                group("冠心病用药A", [medication("冠心病候选药A")]),
+                group("冠心病用药B", [medication("冠心病候选药B")]),
+            ]),
         ]
 
         result, payload = self.run_generator(
@@ -213,14 +250,21 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([record["userid"] for record in payload["records"]], ["u1", "u2"])
-        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "脑梗死候选药"])
-        self.assertEqual(payload["records"][1]["combinedMedication"], ["测试产品", "冠心病候选药"])
+        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "脑梗死候选药A", "脑梗死候选药B"])
+        self.assertEqual(payload["records"][1]["combinedMedication"], ["测试产品", "冠心病候选药A", "冠心病候选药B"])
 
     def test_same_combination_is_allowed_when_configured_per_disease(self):
-        shared = medication("两病均可候选药")
+        shared_a = medication("两病均可候选药A")
+        shared_b = medication("两病均可候选药B")
         plans = [
-            disease_plan("脑梗死方案", ["脑梗死"], [group("脑梗死依据组", [shared])]),
-            disease_plan("冠心病方案", ["冠心病心绞痛"], [group("冠心病依据组", [shared])]),
+            disease_plan("脑梗死方案", ["脑梗死"], [
+                group("脑梗死依据组A", [shared_a]),
+                group("脑梗死依据组B", [shared_b]),
+            ]),
+            disease_plan("冠心病方案", ["冠心病心绞痛"], [
+                group("冠心病依据组A", [shared_a]),
+                group("冠心病依据组B", [shared_b]),
+            ]),
         ]
 
         result, payload = self.run_generator(
@@ -229,23 +273,53 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "两病均可候选药"])
-        self.assertEqual(payload["records"][1]["combinedMedication"], ["测试产品", "两病均可候选药"])
+        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "两病均可候选药A", "两病均可候选药B"])
+        self.assertEqual(payload["records"][1]["combinedMedication"], ["测试产品", "两病均可候选药A", "两病均可候选药B"])
 
-    def test_explicit_product_only_plan_succeeds(self):
+    def test_product_only_plan_fails_minimum_disease_medication_rule(self):
         plans = [disease_plan("脑梗死单药方案", ["脑梗死"], [], allow_product_only=True)]
 
         result, payload = self.run_generator([patient("u1", "脑梗死")], profile(plans))
 
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(payload)
+        self.assertIn("u1", result.stderr)
+        self.assertIn("脑梗死", result.stderr)
+        self.assertIn("疾病治疗药0种，至少需要2种", result.stderr)
+
+    def test_direct_product_adjunct_does_not_count_as_disease_medication(self):
+        adjunct = {**medication("复溶液"), "role": "directProductAdjunct", "rationale": "说明书要求"}
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病用药", [medication("疾病药A")]),
+        ])]
+
+        result, _ = self.run_generator(
+            [patient("u1", "脑梗死")],
+            profile(plans, directProductAdjuncts=[adjunct]),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("疾病治疗药1种，至少需要2种", result.stderr)
+
+    def test_two_disease_medications_succeed_and_product_is_first(self):
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病机制A", [medication("疾病药A")]),
+            group("疾病机制B", [medication("疾病药B")]),
+        ])]
+
+        result, payload = self.run_generator([patient("u1", "脑梗死")], profile(plans))
+
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品"])
+        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "疾病药A", "疾病药B"])
+        self.assertEqual(payload["meta"]["diseaseMedicationNamesByUserid"], {"u1": ["疾病药A", "疾病药B"]})
 
     def test_allergy_uses_safe_alternative_within_matched_disease_plan(self):
         antiplatelets = group("抗血小板候选", [
             medication("阿司匹林肠溶片", avoid=["阿司匹林"]),
             medication("硫酸氢氯吡格雷片", avoid=["氯吡格雷"]),
         ])
-        plans = [disease_plan("脑梗死方案", ["脑梗死"], [antiplatelets])]
+        second_group = group("脑保护候选", [medication("脑保护药")])
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [antiplatelets, second_group])]
 
         result, payload = self.run_generator(
             [patient("u1", "脑梗死", allergy="阿司匹林过敏")],
@@ -253,7 +327,21 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "硫酸氢氯吡格雷片"])
+        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "硫酸氢氯吡格雷片", "脑保护药"])
+
+    def test_allergy_without_safe_alternative_fails_minimum_rule(self):
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病用药A", [medication("药A", avoid=["青霉素"])]),
+            group("疾病用药B", [medication("药B", avoid=["青霉素"])]),
+        ])]
+
+        result, _ = self.run_generator(
+            [patient("u1", "脑梗死", allergy="青霉素过敏")],
+            profile(plans),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("疾病治疗药0种，至少需要2种", result.stderr)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ class SkillContractTest(unittest.TestCase):
     def setUpClass(cls):
         cls.skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         cls.contract = (SKILL_DIR / "references" / "input-output-contract.md").read_text(encoding="utf-8")
+        cls.clinical_rules = (SKILL_DIR / "references" / "clinical-generation-rules.md").read_text(encoding="utf-8")
         cls.rules = (SKILL_DIR / "references" / "adverse-reaction-generation-rules.md").read_text(encoding="utf-8")
         cls.agent = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
@@ -19,7 +20,26 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.0.0"', frontmatter)
+        self.assertIn('version: "1.1.0"', frontmatter)
+
+    def test_monthly_medication_rules_require_three_disease_related_medications(self):
+        for document in [self.skill, self.contract, self.clinical_rules]:
+            self.assertIn("至少 3 种", document)
+            self.assertIn("至少 2 种疾病治疗药", document)
+            self.assertIn("直接产品辅助品不计入", document)
+        for obsolete_rule in ["单药合理时保留单药", "不得强制填充联合用药", "联合用药数量只由"]:
+            self.assertNotIn(obsolete_rule, self.skill)
+            self.assertNotIn(obsolete_rule, self.clinical_rules)
+
+    def test_skill_documents_failure_instead_of_unrelated_medication_filling(self):
+        for expected in ["停止生成", "不得用无关药品凑数", "过敏", "疾病依据"]:
+            self.assertIn(expected, self.skill)
+
+    def test_disease_candidates_require_structured_linkage_evidence(self):
+        for document in [self.skill, self.contract, self.clinical_rules]:
+            self.assertIn("diseaseTreatment", document)
+            self.assertIn("疾病关联理由", document)
+            self.assertIn("药品依据", document)
 
     def test_adverse_reaction_trigger_requires_product(self):
         self.assertIn("产品：", self.skill)

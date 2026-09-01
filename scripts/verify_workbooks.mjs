@@ -3,6 +3,8 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
+import { validateMedicationMinimums } from "./validate_medication_payload.mjs";
+
 const nodeModules = process.env.CODEX_NODE_MODULES;
 if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
 const runtimeRequire = createRequire(path.join(nodeModules, "package.json"));
@@ -22,6 +24,7 @@ for (const key of ["payload", "reminder", "medication", "report"]) {
   if (!args[key]) throw new Error(`缺少--${key}`);
 }
 const payload = JSON.parse(await fs.readFile(path.resolve(args.payload), "utf8"));
+validateMedicationMinimums(payload);
 const patientCount = payload.patients.length;
 const expectedUserids = payload.patients.map((patient) => patient.userid);
 const expectedProduct = payload.meta.productName;

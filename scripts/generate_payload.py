@@ -12,6 +12,8 @@ REQUIRED_MEDICATION_FIELDS = [
     "medicationTime", "treatmentDays", "precautions",
 ]
 ROUTE_WORDS = re.compile(r"口服|肌肉注射|肌内注射|静脉滴注|静脉注射|皮下注射")
+MIN_COMBINED_MEDICATION_COUNT = 3
+MIN_DISEASE_MEDICATION_COUNT = 2
 
 
 def load_json(path):
@@ -74,6 +76,8 @@ def validated_medication(raw, patient):
     medication.pop("avoidIfAllergyContains", None)
     medication.pop("role", None)
     medication.pop("rationale", None)
+    medication.pop("diseaseRationale", None)
+    medication.pop("evidence", None)
     for field in REQUIRED_MEDICATION_FIELDS:
         if field not in medication or medication[field] in (None, ""):
             raise ValueError(f'{patient["userid"]}药品{medication.get("drugName", "")}缺少{field}')
@@ -146,6 +150,15 @@ def validate_profile(profile):
             raise ValueError(f"{plan_id}必须显式设置allowProductOnly")
         if not isinstance(plan.get("medicationGroups", []), list):
             raise ValueError(f"{plan_id}的medicationGroups必须为数组")
+        for group in plan.get("medicationGroups", []):
+            for medication in group.get("alternatives", []):
+                drug_name = str(medication.get("drugName", "")).strip()
+                if (
+                    medication.get("role") != "diseaseTreatment"
+                    or not str(medication.get("diseaseRationale", "")).strip()
+                    or not medication.get("evidence")
+                ):
+                    raise ValueError(f"{plan_id}中的{drug_name}必须声明diseaseTreatment角色、疾病关联理由和药品依据")
     if len(plan_ids) != len(set(plan_ids)):
         raise ValueError("疾病方案id不得重复")
 
@@ -182,6 +195,7 @@ def main():
         raise ValueError("用药产品必须作为baseMedication且名称完全一致")
 
     records, medication_items, reviewed_patients = [], [], []
+    disease_medication_names_by_userid = {}
     for patient in patients:
         raw_medications = []
         if profile.get("baseMedication"):
@@ -198,8 +212,15 @@ def main():
                 disease_medications.append(choice)
             elif group.get("required", False):
                 raise ValueError(f'{patient["userid"]}条件组{group.get("id", "")}无安全替代药')
-        if not disease_medications and not disease_plan["allowProductOnly"]:
+        if profile["productType"] == "用药" and len(disease_medications) < MIN_DISEASE_MEDICATION_COUNT:
+            raise ValueError(
+                f'{patient["userid"]}（疾病：{patient["disease"]}）匹配疾病方案{disease_plan["id"]}后'
+                f'仅生成疾病治疗药{len(disease_medications)}种，至少需要{MIN_DISEASE_MEDICATION_COUNT}种；'
+                "直接产品辅助品不计入数量，请补充有疾病依据且通过过敏/禁忌筛选的候选药"
+            )
+        if profile["productType"] != "用药" and not disease_medications and not disease_plan["allowProductOnly"]:
             raise ValueError(f'{patient["userid"]}的疾病方案{disease_plan["id"]}未生成联合药且未允许产品单药')
+        disease_medication_names_by_userid[patient["userid"]] = [item["drugName"] for item in disease_medications]
         raw_medications.extend(disease_medications)
 
         if not raw_medications:
@@ -254,6 +275,9 @@ def main():
             "patientCount": len(patients),
             "monthLabel": max(extracted["summary"].get("activationMonths", {"": 0}), key=extracted["summary"].get("activationMonths", {"": 0}).get),
             "evidence": profile["evidence"],
+            "minimumCombinedMedicationCount": MIN_COMBINED_MEDICATION_COUNT,
+            "minimumDiseaseMedicationCount": MIN_DISEASE_MEDICATION_COUNT,
+            "diseaseMedicationNamesByUserid": disease_medication_names_by_userid,
         },
         "patients": reviewed_patients,
         "records": records,
