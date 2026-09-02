@@ -149,10 +149,7 @@ for (const count of [3, 4, 5]) {
 const insufficientUniquePayload = structuredClone(exactPayload);
 insufficientUniquePayload.meta.minimumUniqueMedicationPlanCount = 2;
 insufficientUniquePayload.meta.uniqueMedicationPlanCount = 1;
-assert.throws(
-  () => validateMedicationPlanFields(insufficientUniquePayload),
-  /用药方案去重后仅有1种，至少需要2种/,
-);
+assert.doesNotThrow(() => validateMedicationPlanFields(insufficientUniquePayload));
 
 const incorrectUniqueMetadataPayload = structuredClone(exactPayload);
 incorrectUniqueMetadataPayload.meta.uniqueMedicationPlanCount = 2;

@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -115,7 +116,7 @@ def profile(plans, **overrides):
 
 
 class DiseaseSpecificPlansTest(unittest.TestCase):
-    def run_generator(self, patients, product_profile):
+    def run_generator(self, patients, product_profile, *, search_enabled=False):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
             patients_path = temp / "patients.json"
@@ -123,6 +124,8 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
             output_path = temp / "payload.json"
             patients_path.write_text(json.dumps(extracted(patients), ensure_ascii=False), encoding="utf-8")
             profile_path.write_text(json.dumps(product_profile, ensure_ascii=False), encoding="utf-8")
+            environment = dict(os.environ)
+            environment["AUTO_MEDICATION_SEARCH"] = "1" if search_enabled else "0"
             result = subprocess.run(
                 [
                     sys.executable,
@@ -134,6 +137,7 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
+                env=environment,
             )
             payload = json.loads(output_path.read_text(encoding="utf-8")) if output_path.exists() else None
             return result, payload
@@ -285,10 +289,13 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
             profile(plans),
         )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIsNone(payload)
-        self.assertIn("去重后仅有1种", result.stderr)
-        self.assertIn("至少需要2种", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(payload)
+        self.assertEqual(len({item["medicationPlan"] for item in payload["patients"]}), 1)
+        self.assertEqual(payload["meta"]["uniqueMedicationPlanCount"], 1)
+        self.assertEqual(payload["meta"]["minimumUniqueMedicationPlanCount"], 2)
+        self.assertFalse(payload["meta"]["uniqueMedicationPlanTargetMet"])
+        self.assertEqual(payload["meta"]["uniqueMedicationPlanShortfall"], 1)
 
     def test_product_only_plan_fails_minimum_disease_medication_rule(self):
         plans = [disease_plan("脑梗死单药方案", ["脑梗死"], [], allow_product_only=True)]
@@ -481,7 +488,7 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         self.assertGreaterEqual(len({item["medicationPlan"] for item in payload["patients"]}), 10)
         self.assertEqual(payload["meta"]["minimumUniqueMedicationPlanCount"], 10)
 
-    def test_generator_requires_enough_candidate_combinations_for_unique_target(self):
+    def test_generator_allows_fewer_candidate_combinations_than_unique_target(self):
         patients = [patient(f"u{index}", "脑梗死") for index in range(251)]
         alternatives_a = [medication(f"疾病药A{index}") for index in range(1, 3)]
         alternatives_b = [medication(f"疾病药B{index}") for index in range(1, 3)]
@@ -492,10 +499,13 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
 
         result, payload = self.run_generator(patients, profile(plans))
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIsNone(payload)
-        self.assertIn("去重后仅有4种", result.stderr)
-        self.assertIn("至少需要16种", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(payload)
+        self.assertEqual(len({item["medicationPlan"] for item in payload["patients"]}), 4)
+        self.assertEqual(payload["meta"]["minimumUniqueMedicationPlanCount"], 16)
+        self.assertEqual(payload["meta"]["uniqueMedicationPlanPriority"], "recommended")
+        self.assertFalse(payload["meta"]["uniqueMedicationPlanTargetMet"])
+        self.assertEqual(payload["meta"]["uniqueMedicationPlanShortfall"], 12)
 
     def test_allergy_uses_safe_alternative_within_matched_disease_plan(self):
         antiplatelets = group("抗血小板候选", [

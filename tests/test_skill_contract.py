@@ -20,7 +20,15 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.4.0"', frontmatter)
+        self.assertIn('version: "1.5.0"', frontmatter)
+
+    def test_documents_automatic_zero_candidate_search_safety(self):
+        for document in [self.skill, self.contract, self.clinical_rules]:
+            self.assertIn("AUTO_MEDICATION_SEARCH=0", document)
+            self.assertIn("searchAudit", document)
+            self.assertIn("搜索摘要", document)
+            self.assertIn("白名单", document)
+            self.assertIn("字段不完整", document)
 
     def test_documents_both_patient_input_formats(self):
         for document in [self.skill, self.contract]:

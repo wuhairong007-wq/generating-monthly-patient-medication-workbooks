@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 import argparse
+import copy
 import hashlib
 import json
 import math
+import os
 import re
 from collections import defaultdict
 from datetime import datetime, time, timedelta
 from pathlib import Path
+
+from search_disease_medications import is_allowed_url, search_candidates
 
 
 REQUIRED_MEDICATION_FIELDS = [
@@ -215,6 +219,98 @@ def choose_medication_combination(selected_groups, combination_index):
     return medications
 
 
+def _valid_search_candidate(candidate):
+    if not isinstance(candidate, dict):
+        return False
+    if (
+        candidate.get("role") != "diseaseTreatment"
+        or not str(candidate.get("drugName", "")).strip()
+        or not str(candidate.get("diseaseRationale", "")).strip()
+        or not candidate.get("evidence")
+    ):
+        return False
+    if not all(candidate.get(field) not in (None, "") for field in REQUIRED_MEDICATION_FIELDS):
+        return False
+    if not re.fullmatch(r"每日\d+次", str(candidate["frequency"])):
+        return False
+    if not isinstance(candidate["treatmentDays"], int) or candidate["treatmentDays"] <= 0:
+        return False
+    if ROUTE_WORDS.search(str(candidate["medicationTime"])):
+        return False
+    return all(
+        isinstance(item, dict)
+        and is_allowed_url(str(item.get("url", "")))
+        and str(item.get("title", "")).strip()
+        and str(item.get("scope", "")).strip()
+        for item in candidate["evidence"]
+    )
+
+
+def maybe_search_and_extend_profile(profile, patients, search_fn=None, audit_path=None):
+    search_enabled = os.environ.get("AUTO_MEDICATION_SEARCH", "1") != "0"
+    updated_profile = copy.deepcopy(profile)
+    audit = []
+    if not search_enabled:
+        audit.append({"status": "disabled"})
+        return updated_profile, audit
+
+    search_fn = search_fn or search_candidates
+    searched_plans = set()
+    for patient in patients:
+        disease_plan = choose_disease_plan(updated_profile, patient)
+        plan_id = str(disease_plan["id"])
+        if plan_id in searched_plans:
+            continue
+        searched_plans.add(plan_id)
+        selected_groups = safe_group_alternatives(disease_plan, patient)
+        if len(selected_groups) >= MIN_DISEASE_MEDICATION_COUNT:
+            audit.append({"planId": plan_id, "disease": patient["disease"], "status": "not_needed"})
+            continue
+
+        try:
+            result = search_fn(updated_profile["productName"], patient["disease"])
+        except Exception as exc:
+            result = {"status": "error", "candidates": [], "sources": [], "errors": [f"检索器异常：{exc}"]}
+        record = {
+            "planId": plan_id,
+            "disease": patient["disease"],
+            "status": result.get("status", "error") if isinstance(result, dict) else "error",
+            "candidateCount": 0,
+            "incompleteCandidateCount": len(result.get("incompleteCandidates", [])) if isinstance(result, dict) else 0,
+            "sources": result.get("sources", []) if isinstance(result, dict) else [],
+            "errors": result.get("errors", []) if isinstance(result, dict) else ["检索器返回结果无效"],
+        }
+        if isinstance(result, dict):
+            valid_candidates = [candidate for candidate in result.get("candidates", []) if _valid_search_candidate(candidate)]
+            record["candidateCount"] = len(valid_candidates)
+            if valid_candidates:
+                existing_names = {
+                    str(item.get("drugName", ""))
+                    for group in disease_plan.get("medicationGroups", [])
+                    for item in group.get("alternatives", [])
+                }
+                for index, candidate in enumerate(valid_candidates, start=1):
+                    if candidate["drugName"] in existing_names:
+                        continue
+                    disease_plan["medicationGroups"].append({
+                        "id": f"auto-search-{plan_id}-{index}",
+                        "when": {},
+                        "required": True,
+                        "alternatives": [candidate],
+                    })
+                    existing_names.add(candidate["drugName"])
+                record["status"] = "success" if record["candidateCount"] else "incomplete"
+            elif record["status"] == "success":
+                record["status"] = "incomplete"
+        audit.append(record)
+
+    if audit_path:
+        target = Path(audit_path).expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"searchEnabled": search_enabled, "searchAudit": audit}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return updated_profile, audit
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--patients", required=True)
@@ -224,6 +320,8 @@ def main():
     extracted = load_json(args.patients)
     profile = load_json(args.profile)
     patients = extracted["patients"]
+
+    audit_path = Path(args.output).expanduser().resolve().with_name("search-audit.json")
 
     validate_profile(profile)
     if profile.get("productType") not in {"用药", "器械"}:
@@ -235,6 +333,9 @@ def main():
         raise ValueError("product profile必须记录至少一条权威依据")
     if profile["productType"] == "用药" and profile.get("baseMedication", {}).get("drugName") != product_name:
         raise ValueError("用药产品必须作为baseMedication且名称完全一致")
+
+    profile, search_audit = maybe_search_and_extend_profile(profile, patients, audit_path=audit_path)
+    validate_profile(profile)
 
     records, medication_items, reviewed_patients = [], [], []
     disease_medication_names_by_userid = {}
@@ -316,12 +417,7 @@ def main():
 
     unique_medication_plan_count = len({patient["medicationPlan"] for patient in reviewed_patients})
     minimum_unique_plan_count = minimum_unique_medication_plan_count(len(patients))
-    if profile["productType"] == "用药" and unique_medication_plan_count < minimum_unique_plan_count:
-        raise ValueError(
-            f"用药方案去重后仅有{unique_medication_plan_count}种，至少需要{minimum_unique_plan_count}种"
-            f"（患者数{len(patients)}，规则：min(患者数, max(10, ceil(sqrt(患者数)))))；"
-            "请为各疾病方案补充有直接疾病依据且通过安全筛选的候选药，不得用无关药品凑数"
-        )
+    unique_plan_target_met = unique_medication_plan_count >= minimum_unique_plan_count
 
     userids = [patient["userid"] for patient in patients]
     if [record["userid"] for record in records] != userids:
@@ -334,6 +430,8 @@ def main():
             "productName": product_name,
             "patientCount": len(patients),
             "inputFormat": extracted.get("inputFormat", "monthlyPatient18"),
+            "searchEnabled": os.environ.get("AUTO_MEDICATION_SEARCH", "1") != "0",
+            "searchAudit": search_audit,
             "monthLabel": max(
                 (
                     extracted["summary"].get("activationMonths")
@@ -351,6 +449,9 @@ def main():
             "minimumDiseaseMedicationCount": MIN_DISEASE_MEDICATION_COUNT,
             "minimumUniqueMedicationPlanCount": minimum_unique_plan_count,
             "uniqueMedicationPlanCount": unique_medication_plan_count,
+            "uniqueMedicationPlanPriority": "recommended",
+            "uniqueMedicationPlanTargetMet": unique_plan_target_met,
+            "uniqueMedicationPlanShortfall": max(minimum_unique_plan_count - unique_medication_plan_count, 0),
             "diseaseMedicationNamesByUserid": disease_medication_names_by_userid,
         },
         "patients": reviewed_patients,

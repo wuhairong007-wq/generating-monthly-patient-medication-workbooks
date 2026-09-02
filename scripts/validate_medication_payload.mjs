@@ -69,9 +69,6 @@ export function validateMedicationPlanFields(payload) {
       Number.isInteger(declaredUniqueCount) && declaredUniqueCount === actualUniqueCount,
       `用药方案去重数量与元数据不一致：实际${actualUniqueCount}种，元数据${declaredUniqueCount}种`,
     );
-    assert(
-      Number.isInteger(minimumUniqueCount) && actualUniqueCount >= minimumUniqueCount,
-      `用药方案去重后仅有${actualUniqueCount}种，至少需要${minimumUniqueCount}种`,
-    );
+    assert(Number.isInteger(minimumUniqueCount), "用药方案最低去重目标必须为整数");
   }
 }

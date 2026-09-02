@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.4.0"
+  version: "1.6.0"
 ---
 
 # 生成月度患者用药清单
@@ -63,8 +63,9 @@ metadata:
 
    提取结果的 `inputFormat` 为 `monthlyPatient18` 或 `medicationReminder13`。13 列提醒表必须有合法的 `用药方案确认时间`；提取器将其保留为 `sourceConfirmationTime`，生成器会原样复用该确认时间，验证器不要求不存在的 `activateTime`。
 
-2. 查看 `patients.json` 的疾病、年龄、性别、过敏史和 AE 分布。按 `min(患者数, max(10, ceil(sqrt(患者数))))` 计算用药方案最低去重数；患者数量越大，最低去重数越多。核对当前产品的药品说明书/监管信息及每个疾病直接相关的指南，建立 `schemaVersion: 2` 的 `product-profile.json`。不要从示例产品复制药物；每个疾病治疗候选药必须声明 `role: diseaseTreatment`、疾病关联理由和药品依据。
-3. profile 中把当前药品设为 `baseMedication`；仅把复溶液等与产品直接绑定的辅助品放入 `directProductAdjuncts`。按输入中的疾病分别建立 `diseasePlans`，每个方案都要有疾病条件、独立依据、`allowProductOnly` 和 `medicationGroups`。每位患者必须且只能匹配一个 `diseasePlan`，并从该方案中选出至少 2 种疾病治疗药；直接产品辅助品不计入这个数量。为每个药组配置多个同疾病、同治疗角色且有依据的安全候选，使候选组合容量达到最低去重数；生成器按输入顺序对安全候选组合做确定性轮换。
+2. 查看 `patients.json` 的疾病、年龄、性别、过敏史和 AE 分布。按 `min(患者数, max(10, ceil(sqrt(患者数))))` 计算用药方案建议去重目标，用于优先丰富方案多样性但不作为生成阻断条件。核对当前产品的药品说明书/监管信息及每个疾病直接相关的指南，建立 `schemaVersion: 2` 的 `product-profile.json`。不要从示例产品复制药物；每个疾病治疗候选药必须声明 `role: diseaseTreatment`、疾病关联理由和药品依据。
+3. profile 中把当前药品设为 `baseMedication`；仅把复溶液等与产品直接绑定的辅助品放入 `directProductAdjuncts`。按输入中的疾病分别建立 `diseasePlans`，每个方案都要有疾病条件、独立依据、`allowProductOnly` 和 `medicationGroups`。每位患者必须且只能匹配一个 `diseasePlan`，并从该方案中选出至少 2 种疾病治疗药；直接产品辅助品不计入这个数量。优先为每个药组配置多个同疾病、同治疗角色且有依据的安全候选，以丰富方案多样性；生成器按输入顺序对安全候选组合做确定性轮换。
+   如果某个已匹配疾病方案在过敏/禁忌筛选后疾病治疗药为 0 种，默认自动联网检索高可信来源并尝试补充候选；可通过环境变量 `AUTO_MEDICATION_SEARCH=0` 关闭。检索只接受白名单官方/指南来源，不把搜索摘要当作药品依据；候选必须带完整规格、剂量、途径、频次、时间和疗程字段；候选字段不完整、无来源或仍不足 2 种时保持停止。检索过程写入 payload `meta.searchAudit`，不改写输入文件。
 4. 若 `产品类型=器械`，先在 profile 中按疾病建立规范 `surgeryRules`，再配置围手术期用药；无法形成可靠手术方案时停止并说明，不得猜测。
 5. 生成 payload：
 
@@ -102,7 +103,7 @@ metadata:
 - 不得用无关药品凑数。维生素、护胃药、抗菌药或其他药物只有在当前患者疾病方案中有直接依据、满足药组条件且通过过敏/禁忌筛选时才可选用。
 - `directProductAdjuncts` 中的复溶液、稀释液等可随产品输出，但直接产品辅助品不计入至少 2 种疾病治疗药，也不能用来满足至少 3 种联合用药的临床数量要求。
 - `allowProductOnly` 仅为 schema v2 兼容字段；在 `产品类型=用药` 时不得绕过至少 3 种联合用药和至少 2 种疾病治疗药规则。
-- 用药方案最低去重数为 `min(患者数, max(10, ceil(sqrt(患者数))))`；患者数量越大，最低去重数越多。生成器只在对应疾病方案内有直接依据且通过安全筛选的候选药之间确定性轮换；相同方案跨疾病仍只计 1 种。候选组合不足时停止生成并报告实际值和目标值，不得用无关药品凑数。
+- 用药方案去重目标为 `min(患者数, max(10, ceil(sqrt(患者数))))`，属于推荐优先级而非必须条件；患者数量越大，越应优先丰富方案。生成器只在对应疾病方案内有直接依据且通过安全筛选的候选药之间确定性轮换，并在 `meta` 中记录目标是否达成及差额。相同方案跨疾病仍只计 1 种。候选组合不足时可以继续生成，但不得用无关药品凑数；每位患者的至少 3 种联合用药和至少 2 种疾病治疗药仍是硬性条件。
 - 所有方案均须在逐药注意事项或 `prescriptionList` 中注明需医师/药师审核，不作疗效承诺。
 - 不良反应流程只输出中度或重度患者标签对应的 userid；每条记录必须包含 `userid`、`symptomDescription`、`severityGrade`、`treatmentMeasures`、`treatmentOutcome`、`remark` 六个结构化字段。症状描述和关系分析必须包含当前产品名称，处理措施依据症状生成，处理结果/转归综合症状、关系分析和处理措施生成；不得添加固定草案前缀。
 - 不良反应症状描述必须包含对应疾病和实际年龄，按年龄段建立语境，并使用 userid 对主要症状、伴随表现和发生模式做可复现分流；不得仅按疾病和严重程度复用少量整段模板。
