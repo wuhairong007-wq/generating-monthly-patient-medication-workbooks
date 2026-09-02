@@ -22,6 +22,7 @@
   ],
   "baseMedication": {
     "drugName": "产品规范名称",
+    "displayName": "产品规范名称(已核实商品名，可选)",
     "specification": "规格",
     "singleDose": "每次用量",
     "route": "给药途径",
@@ -63,6 +64,7 @@
           "alternatives": [
             {
               "drugName": "首选药",
+              "displayName": "首选药(已核实商品名，可选)",
               "specification": "规格",
               "singleDose": "每次用量",
               "route": "口服",
@@ -91,7 +93,7 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 `allowProductOnly` 必须显式填写布尔值，用于 schema v2 兼容和器械流程判断。在 `产品类型=用药` 时，该字段不能放宽最小数量规则：每位患者的 `combinedMedication` 至少 3 种，且必须从其唯一匹配的疾病方案中选出至少 2 种疾病治疗药。直接产品辅助品不计入疾病治疗药数量；不足时停止生成。
 
-不同疾病可以在分别配置疾病方案和独立依据的前提下生成相同药品组合；不得为制造差异而任意换药。
+不同疾病可以在分别配置疾病方案和独立依据的前提下使用相同候选药，但最终完全相同的用药方案跨疾病只计 1 种。用药方案最低去重数为 `min(患者数, max(10, ceil(sqrt(患者数))))`，因此患者数量越大，最低去重数越多。每个疾病方案应配置足够的同疾病、同治疗角色候选药，生成器按输入顺序在通过过敏/禁忌筛选的候选组合间确定性轮换。候选组合不足时停止生成并报告实际值和目标值，不得用无关药品凑数。
 
 `when` 可使用：`diseaseEqualsAny`、`diseaseContainsAny`、`genderAny`、`ageMin`、`ageMax`、`allergyContainsAny`、`allergyNotContainsAny`、`aeEqualsAny`。同一对象中的条件为 AND，数组内部为 OR。
 
@@ -116,9 +118,13 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 }
 ```
 
-用药清单每行字段为：`userid、drugName、specification、singleDose、frequency、medicationTime、treatmentDays、precautions`。
+用药清单 payload 每行字段为：`userid、drugName、displayName、specification、singleDose、frequency、medicationTime、treatmentDays、precautions`。`displayName` 只允许使用 profile 中显式配置的非空字符串；未配置时生成器回退为 `drugName`，不得自行猜测商品名。工作簿逐药明细仍按既有列输出，不新增展示名称列。
 
-用药 payload 的 `meta` 必须包含 `minimumCombinedMedicationCount: 3`、`minimumDiseaseMedicationCount: 2` 和 `diseaseMedicationNamesByUserid`。后者逐 userid 记录从当前患者唯一 `diseasePlan.medicationGroups` 选出的药名，供工作簿构建和最终交付校验；复溶液、稀释液等直接产品辅助品不计入该映射。药品产品必须位于 `combinedMedication` 首项，至少 2 种疾病治疗药必须有当前疾病的独立依据并通过患者过敏/禁忌筛选。
+`combinedMedication` 按实际生成顺序列出全部 `drugName`，有几种就显示几种。`patients[].medicationPlan` 按相同顺序列出全部“展示名称+每次用量”，使用中文顿号 `、` 连接，有几种就显示几种，例如：`双歧杆菌四联活菌片(思连康)1.0g、蒙脱石散3g、口服补液盐I5.125g、消旋卡多曲颗粒30mg`。
+
+用药方案字段不得包含“用药草案：”、性别、年龄、疾病、过敏史、审核说明或注意事项等长文本。安全与审核内容继续保留在逐药 `precautions` 和 `records[].prescriptionList`，不得因简化展示字段而删除。
+
+用药 payload 的 `meta` 必须包含 `minimumCombinedMedicationCount: 3`、`minimumDiseaseMedicationCount: 2`、`minimumUniqueMedicationPlanCount`、`uniqueMedicationPlanCount` 和 `diseaseMedicationNamesByUserid`。其中最低去重数按 `min(患者数, max(10, ceil(sqrt(患者数))))` 计算；构建器和最终验证器必须重算实际去重数并与元数据及最低目标比较。`diseaseMedicationNamesByUserid` 逐 userid 记录从当前患者唯一 `diseasePlan.medicationGroups` 选出的药名；复溶液、稀释液等直接产品辅助品不计入该映射。药品产品必须位于 `combinedMedication` 首项，至少 2 种疾病治疗药必须有当前疾病的独立依据并通过患者过敏/禁忌筛选。
 
 `diseasePlan.medicationGroups[].alternatives[]` 中的每个疾病治疗候选药必须声明 `role: "diseaseTreatment"`、非空 `diseaseRationale`（疾病关联理由）和非空 `evidence`（药品依据）。生成器拒绝缺少这些字段的候选药，也拒绝把 `directProductAdjunct` 角色的复溶液或稀释液放入疾病治疗药组。
 

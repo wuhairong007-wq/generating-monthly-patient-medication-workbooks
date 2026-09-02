@@ -3,7 +3,10 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
-import { validateMedicationMinimums } from "./validate_medication_payload.mjs";
+import {
+  validateMedicationMinimums,
+  validateMedicationPlanFields,
+} from "./validate_medication_payload.mjs";
 
 const nodeModules = process.env.CODEX_NODE_MODULES;
 if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
@@ -25,6 +28,7 @@ for (const key of ["payload", "reminder", "medication", "report"]) {
 }
 const payload = JSON.parse(await fs.readFile(path.resolve(args.payload), "utf8"));
 validateMedicationMinimums(payload);
+validateMedicationPlanFields(payload);
 const patientCount = payload.patients.length;
 const expectedUserids = payload.patients.map((patient) => patient.userid);
 const expectedProduct = payload.meta.productName;
@@ -48,9 +52,9 @@ const reminderRows = reminderValues.slice(2);
 const reminderUserids = reminderRows.map((row) => String(row[1] ?? ""));
 assert(JSON.stringify(reminderUserids) === JSON.stringify(expectedUserids), "用药提醒userid集合或顺序与源数据不一致");
 assert(reminderRows.every((row, index) => row[7] === payload.records[index].combinedMedication.join("、")), "用药提醒联合用药与生成记录不一致");
+assert(reminderRows.every((row, index) => row[9] === payload.patients[index].medicationPlan), "用药提醒用药方案与生成记录不一致");
 if (payload.meta.productType === "用药") {
   assert(reminderRows.every((row) => String(row[7]).split("、")[0] === expectedProduct), "用药提醒联合用药首项缺少当前产品");
-  assert(reminderRows.every((row) => String(row[9]).includes(expectedProduct)), "用药提醒用药方案缺少产品名称");
   assert(payload.records.every((record) => record.surgeryName === ""), "用药场景surgeryName必须为空");
 } else {
   assert(payload.records.every((record) => record.surgeryName), "器械场景surgeryName不能为空");
@@ -106,6 +110,8 @@ const verification = {
   exactUseridOrderMatch: true,
   medicationMappingMatch: true,
   medicationCountDistribution: Object.fromEntries([...new Set(payload.records.map((record) => record.combinedMedication.length))].sort().map((count) => [count, payload.records.filter((record) => record.combinedMedication.length === count).length])),
+  uniqueMedicationPlanCount: new Set(payload.patients.map((patient) => patient.medicationPlan)).size,
+  minimumUniqueMedicationPlanCount: payload.meta.minimumUniqueMedicationPlanCount,
   surgeryNamesValid: payload.meta.productType === "用药" ? payload.records.every((record) => record.surgeryName === "") : payload.records.every((record) => record.surgeryName),
   chineseFrequencies: true,
   medicationTimesContainOnlyTiming: true,

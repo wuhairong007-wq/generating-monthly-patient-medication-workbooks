@@ -2,7 +2,9 @@
 import argparse
 import hashlib
 import json
+import math
 import re
+from collections import defaultdict
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
@@ -14,6 +16,12 @@ REQUIRED_MEDICATION_FIELDS = [
 ROUTE_WORDS = re.compile(r"口服|肌肉注射|肌内注射|静脉滴注|静脉注射|皮下注射")
 MIN_COMBINED_MEDICATION_COUNT = 3
 MIN_DISEASE_MEDICATION_COUNT = 2
+
+
+def minimum_unique_medication_plan_count(patient_count):
+    if patient_count <= 0:
+        return 0
+    return min(patient_count, max(10, math.ceil(math.sqrt(patient_count))))
 
 
 def load_json(path):
@@ -81,6 +89,14 @@ def validated_medication(raw, patient):
     for field in REQUIRED_MEDICATION_FIELDS:
         if field not in medication or medication[field] in (None, ""):
             raise ValueError(f'{patient["userid"]}药品{medication.get("drugName", "")}缺少{field}')
+    if "displayName" in medication:
+        if not isinstance(medication["displayName"], str) or not medication["displayName"].strip():
+            raise ValueError(
+                f'{patient["userid"]}药品{medication.get("drugName", "")}的displayName必须为非空字符串'
+            )
+        medication["displayName"] = medication["displayName"].strip()
+    else:
+        medication["displayName"] = str(medication["drugName"]).strip()
     if not re.fullmatch(r"每日\d+次", str(medication["frequency"])):
         raise ValueError(f'{medication["drugName"]}频次必须为每日N次')
     if ROUTE_WORDS.search(str(medication["medicationTime"])):
@@ -173,6 +189,32 @@ def choose_disease_plan(profile, patient):
     return matched[0]
 
 
+def safe_group_alternatives(disease_plan, patient):
+    selected_groups = []
+    for group in disease_plan.get("medicationGroups", []):
+        if not matches(patient, group.get("when", {})):
+            continue
+        alternatives = [
+            item for item in group.get("alternatives", [])
+            if safe_for_allergy(item, patient["allergyHistory"])
+        ]
+        if not alternatives:
+            if group.get("required", False):
+                raise ValueError(f'{patient["userid"]}条件组{group.get("id", "")}无安全替代药')
+            continue
+        selected_groups.append((group, alternatives))
+    return selected_groups
+
+
+def choose_medication_combination(selected_groups, combination_index):
+    medications = []
+    remaining_index = combination_index
+    for _, alternatives in selected_groups:
+        medications.append(alternatives[remaining_index % len(alternatives)])
+        remaining_index //= len(alternatives)
+    return medications
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--patients", required=True)
@@ -196,6 +238,7 @@ def main():
 
     records, medication_items, reviewed_patients = [], [], []
     disease_medication_names_by_userid = {}
+    combination_counters = defaultdict(int)
     for patient in patients:
         raw_medications = []
         if profile.get("baseMedication"):
@@ -203,15 +246,17 @@ def main():
         raw_medications.extend(profile.get("directProductAdjuncts", []))
 
         disease_plan = choose_disease_plan(profile, patient)
-        disease_medications = []
-        for group in disease_plan.get("medicationGroups", []):
-            if not matches(patient, group.get("when", {})):
-                continue
-            choice = next((item for item in group.get("alternatives", []) if safe_for_allergy(item, patient["allergyHistory"])), None)
-            if choice:
-                disease_medications.append(choice)
-            elif group.get("required", False):
-                raise ValueError(f'{patient["userid"]}条件组{group.get("id", "")}无安全替代药')
+        selected_groups = safe_group_alternatives(disease_plan, patient)
+        combination_key = (
+            disease_plan["id"],
+            tuple(
+                (str(group.get("id", "")), tuple(item["drugName"] for item in alternatives))
+                for group, alternatives in selected_groups
+            ),
+        )
+        combination_index = combination_counters[combination_key]
+        combination_counters[combination_key] += 1
+        disease_medications = choose_medication_combination(selected_groups, combination_index)
         if profile["productType"] == "用药" and len(disease_medications) < MIN_DISEASE_MEDICATION_COUNT:
             raise ValueError(
                 f'{patient["userid"]}（疾病：{patient["disease"]}）匹配疾病方案{disease_plan["id"]}后'
@@ -243,7 +288,7 @@ def main():
             medication_items.append({
                 "userid": patient["userid"],
                 **{field: medication[field] for field in [
-                    "drugName", "specification", "singleDose", "frequency",
+                    "drugName", "displayName", "specification", "singleDose", "frequency",
                     "medicationTime", "treatmentDays", "precautions",
                 ]},
             })
@@ -251,17 +296,24 @@ def main():
         confirmed_at = confirmation_time(patient["userid"], activated_at)
         days = sorted(set(item["treatmentDays"] for item in medications))
         cycle = "、".join(f"{value}天" for value in days)
-        global_notes = "；".join(profile.get("globalNotes", []))
         reviewed_patients.append({
             **patient,
             "confirmationTime": confirmed_at.strftime("%Y-%m-%d %H:%M:%S"),
-            "medicationPlan": (
-                f'{patient["gender"]}，{patient["age"]}岁，疾病为{patient["disease"]}，'
-                f'既往过敏史：{patient["allergyHistory"]}。用药草案：{"、".join(names)}；'
-                f'{global_notes}。实际适应证、剂量、疗程及相互作用须由医师或药师复核，不作疗效承诺。'
+            "medicationPlan": "、".join(
+                f'{item["displayName"]}{str(item["singleDose"]).strip()}'
+                for item in medications
             ),
             "medicationCycle": cycle,
         })
+
+    unique_medication_plan_count = len({patient["medicationPlan"] for patient in reviewed_patients})
+    minimum_unique_plan_count = minimum_unique_medication_plan_count(len(patients))
+    if profile["productType"] == "用药" and unique_medication_plan_count < minimum_unique_plan_count:
+        raise ValueError(
+            f"用药方案去重后仅有{unique_medication_plan_count}种，至少需要{minimum_unique_plan_count}种"
+            f"（患者数{len(patients)}，规则：min(患者数, max(10, ceil(sqrt(患者数)))))；"
+            "请为各疾病方案补充有直接疾病依据且通过安全筛选的候选药，不得用无关药品凑数"
+        )
 
     userids = [patient["userid"] for patient in patients]
     if [record["userid"] for record in records] != userids:
@@ -277,6 +329,8 @@ def main():
             "evidence": profile["evidence"],
             "minimumCombinedMedicationCount": MIN_COMBINED_MEDICATION_COUNT,
             "minimumDiseaseMedicationCount": MIN_DISEASE_MEDICATION_COUNT,
+            "minimumUniqueMedicationPlanCount": minimum_unique_plan_count,
+            "uniqueMedicationPlanCount": unique_medication_plan_count,
             "diseaseMedicationNamesByUserid": disease_medication_names_by_userid,
         },
         "patients": reviewed_patients,

@@ -8,13 +8,22 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 SCRIPT = SKILL_DIR / "scripts" / "generate_payload.py"
+UNSET = object()
 
 
-def medication(name, *, avoid=None, precautions=None):
+def medication(
+    name,
+    *,
+    avoid=None,
+    precautions=None,
+    display_name=UNSET,
+    single_dose="10mg",
+    age_dose_rules=None,
+):
     item = {
         "drugName": name,
         "specification": "10mg/片",
-        "singleDose": "10mg",
+        "singleDose": single_dose,
         "route": "口服",
         "frequency": "每日1次",
         "medicationTime": "早餐后",
@@ -26,6 +35,10 @@ def medication(name, *, avoid=None, precautions=None):
     }
     if avoid:
         item["avoidIfAllergyContains"] = avoid
+    if display_name is not UNSET:
+        item["displayName"] = display_name
+    if age_dose_rules is not None:
+        item["ageDoseRules"] = age_dose_rules
     return item
 
 
@@ -253,7 +266,7 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "脑梗死候选药A", "脑梗死候选药B"])
         self.assertEqual(payload["records"][1]["combinedMedication"], ["测试产品", "冠心病候选药A", "冠心病候选药B"])
 
-    def test_same_combination_is_allowed_when_configured_per_disease(self):
+    def test_same_combination_across_diseases_counts_as_one_unique_plan(self):
         shared_a = medication("两病均可候选药A")
         shared_b = medication("两病均可候选药B")
         plans = [
@@ -272,9 +285,10 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
             profile(plans),
         )
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "两病均可候选药A", "两病均可候选药B"])
-        self.assertEqual(payload["records"][1]["combinedMedication"], ["测试产品", "两病均可候选药A", "两病均可候选药B"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(payload)
+        self.assertIn("去重后仅有1种", result.stderr)
+        self.assertIn("至少需要2种", result.stderr)
 
     def test_product_only_plan_fails_minimum_disease_medication_rule(self):
         plans = [disease_plan("脑梗死单药方案", ["脑梗死"], [], allow_product_only=True)]
@@ -312,6 +326,161 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "疾病药A", "疾病药B"])
         self.assertEqual(payload["meta"]["diseaseMedicationNamesByUserid"], {"u1": ["疾病药A", "疾病药B"]})
+
+    def test_medication_plan_lists_every_drug_as_display_name_and_single_dose(self):
+        product_name = "双歧杆菌四联活菌片"
+        medications = [
+            medication("蒙脱石散", single_dose="3g"),
+            medication("口服补液盐I", single_dose="5.125g"),
+            medication("消旋卡多曲颗粒", single_dose="30mg"),
+        ]
+        plans = [disease_plan("腹泻方案", ["抗生素相关性腹泻"], [
+            group(f"疾病用药{index}", [item])
+            for index, item in enumerate(medications, start=1)
+        ])]
+        product_profile = profile(
+            plans,
+            productName=product_name,
+            baseMedication=medication(
+                product_name,
+                display_name="双歧杆菌四联活菌片(思连康)",
+                single_dose="1.0g",
+            ),
+        )
+
+        result, payload = self.run_generator(
+            [patient("u1", "抗生素相关性腹泻", gender="女", age=34)],
+            product_profile,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            payload["patients"][0]["medicationPlan"],
+            "双歧杆菌四联活菌片(思连康)1.0g、蒙脱石散3g、口服补液盐I5.125g、消旋卡多曲颗粒30mg",
+        )
+        self.assertEqual(
+            payload["records"][0]["combinedMedication"],
+            ["双歧杆菌四联活菌片", "蒙脱石散", "口服补液盐I", "消旋卡多曲颗粒"],
+        )
+        self.assertEqual(
+            [item["displayName"] for item in payload["medicationItems"]],
+            ["双歧杆菌四联活菌片(思连康)", "蒙脱石散", "口服补液盐I", "消旋卡多曲颗粒"],
+        )
+
+    def test_medication_plan_falls_back_to_drug_name(self):
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病机制A", [medication("疾病药A", single_dose="20mg")]),
+            group("疾病机制B", [medication("疾病药B", single_dose="30mg")]),
+        ])]
+
+        result, payload = self.run_generator([patient("u1", "脑梗死")], profile(plans))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["patients"][0]["medicationPlan"], "测试产品10mg、疾病药A20mg、疾病药B30mg")
+        self.assertEqual(
+            [item["displayName"] for item in payload["medicationItems"]],
+            ["测试产品", "疾病药A", "疾病药B"],
+        )
+
+    def test_medication_plan_uses_age_adjusted_single_dose(self):
+        adjusted = medication(
+            "疾病药A",
+            single_dose="20mg",
+            age_dose_rules=[{"ageMin": 65, "singleDose": "10mg"}],
+        )
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病机制A", [adjusted]),
+            group("疾病机制B", [medication("疾病药B", single_dose="30mg")]),
+        ])]
+
+        result, payload = self.run_generator([patient("u1", "脑梗死", age=70)], profile(plans))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["patients"][0]["medicationPlan"], "测试产品10mg、疾病药A10mg、疾病药B30mg")
+
+    def test_medication_plan_displays_all_three_to_five_drugs(self):
+        for total_count in (3, 4, 5):
+            with self.subTest(total_count=total_count):
+                disease_medications = [
+                    medication(f"疾病药{index}", single_dose=f"{index}mg")
+                    for index in range(1, total_count)
+                ]
+                plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+                    group(f"疾病机制{index}", [item])
+                    for index, item in enumerate(disease_medications, start=1)
+                ])]
+
+                result, payload = self.run_generator([patient("u1", "脑梗死")], profile(plans))
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(payload["records"][0]["combinedMedication"]), total_count)
+                self.assertEqual(len(payload["patients"][0]["medicationPlan"].split("、")), total_count)
+
+    def test_rejects_empty_or_non_string_display_name(self):
+        for invalid_display_name in ("", "  ", 123):
+            with self.subTest(display_name=invalid_display_name):
+                plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+                    group("疾病机制A", [medication("疾病药A", display_name=invalid_display_name)]),
+                    group("疾病机制B", [medication("疾病药B")]),
+                ])]
+
+                result, payload = self.run_generator([patient("u1", "脑梗死")], profile(plans))
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(payload)
+                self.assertIn("displayName必须为非空字符串", result.stderr)
+
+    def test_unique_medication_plan_target_scales_with_patient_count(self):
+        self.assertEqual(self.skill_module_target(1), 1)
+        self.assertEqual(self.skill_module_target(9), 9)
+        self.assertEqual(self.skill_module_target(10), 10)
+        self.assertEqual(self.skill_module_target(100), 10)
+        self.assertEqual(self.skill_module_target(101), 11)
+        self.assertEqual(self.skill_module_target(251), 16)
+        self.assertEqual(self.skill_module_target(400), 20)
+        self.assertEqual(self.skill_module_target(2500), 50)
+        self.assertLessEqual(self.skill_module_target(100), self.skill_module_target(251))
+        self.assertLessEqual(self.skill_module_target(251), self.skill_module_target(400))
+
+    @staticmethod
+    def skill_module_target(patient_count):
+        from importlib.util import module_from_spec, spec_from_file_location
+
+        spec = spec_from_file_location("generate_payload", SCRIPT)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.minimum_unique_medication_plan_count(patient_count)
+
+    def test_generator_reaches_unique_plan_target_when_candidates_support_it(self):
+        patients = [patient(f"u{index}", "脑梗死") for index in range(16)]
+        alternatives_a = [medication(f"疾病药A{index}", single_dose=f"{index}mg") for index in range(1, 5)]
+        alternatives_b = [medication(f"疾病药B{index}", single_dose=f"{index}mg") for index in range(1, 5)]
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病机制A", alternatives_a),
+            group("疾病机制B", alternatives_b),
+        ])]
+
+        result, payload = self.run_generator(patients, profile(plans))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertGreaterEqual(len({item["medicationPlan"] for item in payload["patients"]}), 10)
+        self.assertEqual(payload["meta"]["minimumUniqueMedicationPlanCount"], 10)
+
+    def test_generator_requires_enough_candidate_combinations_for_unique_target(self):
+        patients = [patient(f"u{index}", "脑梗死") for index in range(251)]
+        alternatives_a = [medication(f"疾病药A{index}") for index in range(1, 3)]
+        alternatives_b = [medication(f"疾病药B{index}") for index in range(1, 3)]
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病机制A", alternatives_a),
+            group("疾病机制B", alternatives_b),
+        ])]
+
+        result, payload = self.run_generator(patients, profile(plans))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(payload)
+        self.assertIn("去重后仅有4种", result.stderr)
+        self.assertIn("至少需要16种", result.stderr)
 
     def test_allergy_uses_safe_alternative_within_matched_disease_plan(self):
         antiplatelets = group("抗血小板候选", [

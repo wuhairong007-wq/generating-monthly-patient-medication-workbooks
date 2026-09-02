@@ -3,7 +3,10 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
-import { validateMedicationMinimums } from "./validate_medication_payload.mjs";
+import {
+  validateMedicationMinimums,
+  validateMedicationPlanFields,
+} from "./validate_medication_payload.mjs";
 
 const nodeModules = process.env.CODEX_NODE_MODULES;
 if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
@@ -96,6 +99,7 @@ const payload = earlyPayload;
 await progress("payload loaded");
 const { patients, records, medicationItems, meta } = payload;
 validateMedicationMinimums(payload);
+validateMedicationPlanFields(payload);
 assert(["用药", "器械"].includes(meta.productType), "产品类型仅支持用药或器械");
 assert(patients.length === meta.patientCount, "患者数量与元数据不一致");
 assert(records.length === patients.length, "生成记录数量与患者数量不一致");
@@ -266,6 +270,8 @@ const qc = {
   productIncludedFirst: meta.productType === "用药" ? records.every((record) => record.combinedMedication[0] === meta.productName) : null,
   medicationListMatchesCombinedMedication: records.every((record) => JSON.stringify((itemsByUserid.get(record.userid) ?? []).map((item) => item.drugName)) === JSON.stringify(record.combinedMedication)),
   medicationCountDistribution: Object.fromEntries([...new Set(records.map((record) => record.combinedMedication.length))].sort().map((count) => [count, records.filter((record) => record.combinedMedication.length === count).length])),
+  uniqueMedicationPlanCount: new Set(patients.map((patient) => patient.medicationPlan)).size,
+  minimumUniqueMedicationPlanCount: meta.minimumUniqueMedicationPlanCount,
   chineseFrequency: medicationItems.every((item) => /^每日\d+次$/.test(item.frequency)),
   timingOnly: medicationItems.every((item) => !/(肌肉注射|肌内注射|静脉滴注|静脉注射|皮下注射|口服)/.test(item.medicationTime)),
   integerTreatmentDays: medicationItems.every((item) => Number.isInteger(item.treatmentDays)),

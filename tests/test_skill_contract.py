@@ -20,7 +20,26 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.1.0"', frontmatter)
+        self.assertIn('version: "1.3.0"', frontmatter)
+
+    def test_documents_patient_count_scaled_plan_diversity(self):
+        for document in [self.skill, self.contract, self.clinical_rules]:
+            self.assertIn("min(患者数, max(10, ceil(sqrt(患者数))))", document)
+            self.assertIn("数量越大", document)
+            self.assertIn("确定性轮换", document)
+            self.assertIn("候选组合不足", document)
+            self.assertIn("停止生成", document)
+            self.assertIn("不得用无关药品凑数", document)
+
+    def test_documents_concise_medication_plan_field(self):
+        for document in [self.skill, self.contract, self.clinical_rules]:
+            self.assertIn("展示名称+每次用量", document)
+            self.assertIn("有几种就显示几种", document)
+            self.assertIn("displayName", document)
+            self.assertIn("drugName", document)
+            self.assertIn("不得自行猜测商品名", document)
+            self.assertIn("用药方案字段不得包含“用药草案：”", document)
+            self.assertIn("prescriptionList", document)
 
     def test_monthly_medication_rules_require_three_disease_related_medications(self):
         for document in [self.skill, self.contract, self.clinical_rules]:
