@@ -13,6 +13,10 @@ EXPECTED_HEADERS = [
     "疾病", "既往过敏史", "AI用药提醒次数", "AI随访次数", "症状自评完成次数",
     "患教内容阅读次数", "AI服务使用概况", "本月是否发生不良反应（AE）", "AE严重程度分级", "患者标签",
 ]
+REMINDER_HEADERS = [
+    "序号", "患者唯一标识", "姓名", "性别", "年龄", "疾病", "既往过敏史", "联合用药",
+    "用药方案确认时间", "用药方案", "用药周期", "方案链接", "本月是否发生不良反应（AE）",
+]
 
 
 def as_text(value):
@@ -23,7 +27,7 @@ def as_text(value):
     return str(value).strip()
 
 
-def as_datetime(value, userid):
+def as_datetime(value, userid, label="激活日期"):
     if isinstance(value, datetime):
         return value
     if isinstance(value, date):
@@ -31,7 +35,7 @@ def as_datetime(value, userid):
     try:
         return datetime.fromisoformat(as_text(value))
     except ValueError as exc:
-        raise ValueError(f"{userid}激活日期无效：{value}") from exc
+        raise ValueError(f"{userid}{label}无效：{value}") from exc
 
 
 def main():
@@ -54,8 +58,12 @@ def main():
     except StopIteration as exc:
         raise ValueError("患者文件至少需要标题行、表头行和数据行") from exc
     headers = [as_text(value) for value in header_row]
-    if headers != EXPECTED_HEADERS:
-        raise ValueError(f"第二行表头不符合18列契约：{headers}")
+    if headers == EXPECTED_HEADERS:
+        input_format = "monthlyPatient18"
+    elif headers == REMINDER_HEADERS:
+        input_format = "medicationReminder13"
+    else:
+        raise ValueError(f"第二行表头不符合18列或13列用药提醒契约：{headers}")
 
     patients = []
     seen = set()
@@ -77,7 +85,13 @@ def main():
             raise ValueError(f"{userid}年龄无效：{age_raw}") from exc
         if age < 0 or age > 120 or float(age_raw) != age:
             raise ValueError(f"{userid}年龄无效：{age_raw}")
-        activated_at = as_datetime(row["激活日期"], userid)
+        if input_format == "monthlyPatient18":
+            activated_at = as_datetime(row["激活日期"], userid)
+            confirmation_time = ""
+        else:
+            source_confirmation = as_datetime(row["用药方案确认时间"], userid, "用药方案确认时间")
+            activated_at = None
+            confirmation_time = source_confirmation.strftime("%Y-%m-%d %H:%M:%S")
         gender = as_text(row["性别"])
         if gender not in {"男", "女"}:
             raise ValueError(f"{userid}性别无效：{gender}")
@@ -85,27 +99,35 @@ def main():
         if not disease:
             raise ValueError(f"{userid}疾病为空")
 
-        patients.append({
+        patient = {
             "sequence": int(row["序号"]),
             "userid": userid,
             "patientName": as_text(row["姓名"]),
-            "activateTime": activated_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "activateTime": activated_at.strftime("%Y-%m-%d %H:%M:%S") if activated_at else "",
             "gender": gender,
             "age": age,
             "disease": disease,
             "allergyHistory": as_text(row["既往过敏史"]) or "无",
             "adverseEvent": as_text(row["本月是否发生不良反应（AE）"]) or "否",
-            "adverseEventGrade": as_text(row["AE严重程度分级"]),
-            "patientTags": as_text(row["患者标签"]),
-        })
+            "adverseEventGrade": as_text(row.get("AE严重程度分级")),
+            "patientTags": as_text(row.get("患者标签")),
+        }
+        if input_format == "medicationReminder13":
+            patient["sourceConfirmationTime"] = confirmation_time
+            patient["confirmationTime"] = confirmation_time
+        patients.append(patient)
 
     if not patients:
         raise ValueError("患者文件没有数据行")
-    activation_months = Counter(p["activateTime"][:7] for p in patients)
+    activation_months = Counter(p["activateTime"][:7] for p in patients if p["activateTime"])
+    confirmation_months = Counter(
+        p["sourceConfirmationTime"][:7] for p in patients if p.get("sourceConfirmationTime")
+    )
     payload = {
         "source": str(source),
         "title": as_text(title_row[0] if title_row else ""),
         "headers": headers,
+        "inputFormat": input_format,
         "patients": patients,
         "summary": {
             "patientCount": len(patients),
@@ -117,6 +139,7 @@ def main():
             "ageMin": min(p["age"] for p in patients),
             "ageMax": max(p["age"] for p in patients),
             "activationMonths": dict(activation_months),
+            "confirmationMonths": dict(confirmation_months),
         },
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -126,4 +149,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

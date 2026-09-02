@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # 生成月度患者用药清单
@@ -47,6 +47,8 @@ metadata:
 
 原有用药/器械流程继续提取 `依据文件`、`产品类型` 和 `产品名称`。
 
+输入文件可为标准 18 列月度患者源表，也可为 13 列“用药提醒”表。识别为 13 列时，沿用其中已有的 `用药方案确认时间`，不把它改名为激活时间，也不从旧 `联合用药` 或 `用药方案` 文本反推临床事实；缺少的激活日期、联系方式等字段保持为空。
+
 典型触发：`生成月度患者清单 依据文件：/path/月度患者清单.xlsx 产品类型：用药 产品名称：血栓通胶囊`。
 
 输入、输出及 profile 契约见 [references/input-output-contract.md](references/input-output-contract.md)。临床生成边界见 [references/clinical-generation-rules.md](references/clinical-generation-rules.md)，每次生成前必须阅读全文。
@@ -58,6 +60,8 @@ metadata:
    ```bash
    python scripts/extract_patients.py --source INPUT.xlsx --output patients.json
    ```
+
+   提取结果的 `inputFormat` 为 `monthlyPatient18` 或 `medicationReminder13`。13 列提醒表必须有合法的 `用药方案确认时间`；提取器将其保留为 `sourceConfirmationTime`，生成器会原样复用该确认时间，验证器不要求不存在的 `activateTime`。
 
 2. 查看 `patients.json` 的疾病、年龄、性别、过敏史和 AE 分布。按 `min(患者数, max(10, ceil(sqrt(患者数))))` 计算用药方案最低去重数；患者数量越大，最低去重数越多。核对当前产品的药品说明书/监管信息及每个疾病直接相关的指南，建立 `schemaVersion: 2` 的 `product-profile.json`。不要从示例产品复制药物；每个疾病治疗候选药必须声明 `role: diseaseTreatment`、疾病关联理由和药品依据。
 3. profile 中把当前药品设为 `baseMedication`；仅把复溶液等与产品直接绑定的辅助品放入 `directProductAdjuncts`。按输入中的疾病分别建立 `diseasePlans`，每个方案都要有疾病条件、独立依据、`allowProductOnly` 和 `medicationGroups`。每位患者必须且只能匹配一个 `diseasePlan`，并从该方案中选出至少 2 种疾病治疗药；直接产品辅助品不计入这个数量。为每个药组配置多个同疾病、同治疗角色且有依据的安全候选，使候选组合容量达到最低去重数；生成器按输入顺序对安全候选组合做确定性轮换。

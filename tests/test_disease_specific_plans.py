@@ -327,6 +327,21 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "疾病药A", "疾病药B"])
         self.assertEqual(payload["meta"]["diseaseMedicationNamesByUserid"], {"u1": ["疾病药A", "疾病药B"]})
 
+    def test_reminder_input_reuses_source_confirmation_time(self):
+        reminder_patient = patient("u1", "脑梗死")
+        reminder_patient["activateTime"] = ""
+        reminder_patient["sourceConfirmationTime"] = "2026-04-10 10:30:00"
+        reminder_patient["confirmationTime"] = "2026-04-10 10:30:00"
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病机制A", [medication("疾病药A")]),
+            group("疾病机制B", [medication("疾病药B")]),
+        ])]
+
+        result, payload = self.run_generator([reminder_patient], profile(plans))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["patients"][0]["confirmationTime"], "2026-04-10 10:30:00")
+
     def test_medication_plan_lists_every_drug_as_display_name_and_single_dose(self):
         product_name = "双歧杆菌四联活菌片"
         medications = [

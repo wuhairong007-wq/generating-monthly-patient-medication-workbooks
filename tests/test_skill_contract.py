@@ -20,7 +20,15 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.3.0"', frontmatter)
+        self.assertIn('version: "1.4.0"', frontmatter)
+
+    def test_documents_both_patient_input_formats(self):
+        for document in [self.skill, self.contract]:
+            self.assertIn("monthlyPatient18", document)
+            self.assertIn("medicationReminder13", document)
+            self.assertIn("sourceConfirmationTime", document)
+        self.assertIn("不从旧 `联合用药` 或 `用药方案` 文本反推临床事实", self.skill)
+        self.assertIn("不得读取或解析该表已有的 `联合用药`、`用药方案`", self.contract)
 
     def test_documents_patient_count_scaled_plan_diversity(self):
         for document in [self.skill, self.contract, self.clinical_rules]:

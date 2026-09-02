@@ -7,6 +7,7 @@ import {
   validateMedicationMinimums,
   validateMedicationPlanFields,
 } from "./validate_medication_payload.mjs";
+import { validateReminderConfirmation } from "./validate_confirmation_time.mjs";
 
 const nodeModules = process.env.CODEX_NODE_MODULES;
 if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
@@ -40,10 +41,6 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function parseDateTime(value) {
-  return new Date(String(value).replace(" ", "T") + "+08:00");
-}
-
 const reminderWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(reminderPath));
 const reminderSheet = reminderWorkbook.worksheets.getItemAt(0);
 const reminderValues = reminderSheet.getUsedRange(true).values;
@@ -62,12 +59,11 @@ if (payload.meta.productType === "用药") {
 assert(reminderSheet.tables.items.length === 1, "用药提醒必须且只能包含一个表格对象");
 for (let index = 0; index < reminderRows.length; index += 1) {
   const patient = payload.patients[index];
-  const confirmation = parseDateTime(reminderRows[index][8]);
-  const activation = parseDateTime(patient.activateTime);
-  assert(confirmation > activation, `${patient.userid}确认时间未晚于激活时间`);
-  assert(confirmation.getUTCFullYear() === activation.getUTCFullYear() && confirmation.getUTCMonth() === activation.getUTCMonth(), `${patient.userid}确认时间跨月`);
-  const localHour = Number(String(reminderRows[index][8]).slice(11, 13));
-  assert(localHour >= 6 && localHour <= 21, `${patient.userid}确认时间超出06:00:00–21:59:59`);
+  validateReminderConfirmation({
+    patient,
+    reminderValue: reminderRows[index][8],
+    inputFormat: payload.meta.inputFormat,
+  });
 }
 
 const medicationWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(medicationPath));

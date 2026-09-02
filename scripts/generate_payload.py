@@ -292,8 +292,16 @@ def main():
                     "medicationTime", "treatmentDays", "precautions",
                 ]},
             })
-        activated_at = datetime.fromisoformat(patient["activateTime"])
-        confirmed_at = confirmation_time(patient["userid"], activated_at)
+        if patient.get("sourceConfirmationTime"):
+            try:
+                confirmed_at = datetime.fromisoformat(patient["sourceConfirmationTime"])
+            except ValueError as exc:
+                raise ValueError(f'{patient["userid"]}用药方案确认时间无效：{patient["sourceConfirmationTime"]}') from exc
+        else:
+            if not patient.get("activateTime"):
+                raise ValueError(f'{patient["userid"]}缺少激活日期或用药方案确认时间')
+            activated_at = datetime.fromisoformat(patient["activateTime"])
+            confirmed_at = confirmation_time(patient["userid"], activated_at)
         days = sorted(set(item["treatmentDays"] for item in medications))
         cycle = "、".join(f"{value}天" for value in days)
         reviewed_patients.append({
@@ -325,7 +333,19 @@ def main():
             "productType": profile["productType"],
             "productName": product_name,
             "patientCount": len(patients),
-            "monthLabel": max(extracted["summary"].get("activationMonths", {"": 0}), key=extracted["summary"].get("activationMonths", {"": 0}).get),
+            "inputFormat": extracted.get("inputFormat", "monthlyPatient18"),
+            "monthLabel": max(
+                (
+                    extracted["summary"].get("activationMonths")
+                    or extracted["summary"].get("confirmationMonths")
+                    or {"": 0}
+                ),
+                key=(
+                    extracted["summary"].get("activationMonths")
+                    or extracted["summary"].get("confirmationMonths")
+                    or {"": 0}
+                ).get,
+            ),
             "evidence": profile["evidence"],
             "minimumCombinedMedicationCount": MIN_COMBINED_MEDICATION_COUNT,
             "minimumDiseaseMedicationCount": MIN_DISEASE_MEDICATION_COUNT,
