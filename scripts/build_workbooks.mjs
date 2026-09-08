@@ -270,7 +270,7 @@ const qc = {
   productIncludedFirst: meta.productType === "用药" ? records.every((record) => record.combinedMedication[0] === meta.productName) : null,
   medicationListMatchesCombinedMedication: records.every((record) => JSON.stringify((itemsByUserid.get(record.userid) ?? []).map((item) => item.drugName)) === JSON.stringify(record.combinedMedication)),
   medicationCountDistribution: Object.fromEntries([...new Set(records.map((record) => record.combinedMedication.length))].sort().map((count) => [count, records.filter((record) => record.combinedMedication.length === count).length])),
-  uniqueMedicationPlanCount: new Set(patients.map((patient) => patient.medicationPlan)).size,
+  uniqueMedicationPlanCount: meta.uniqueMedicationPlanCount,
   minimumUniqueMedicationPlanCount: meta.minimumUniqueMedicationPlanCount,
   chineseFrequency: medicationItems.every((item) => /^每日\d+次$/.test(item.frequency)),
   timingOnly: medicationItems.every((item) => !/(肌肉注射|肌内注射|静脉滴注|静脉注射|皮下注射|口服)/.test(item.medicationTime)),

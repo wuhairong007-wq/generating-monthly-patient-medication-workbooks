@@ -18,14 +18,34 @@ REQUIRED_MEDICATION_FIELDS = [
     "medicationTime", "treatmentDays", "precautions",
 ]
 ROUTE_WORDS = re.compile(r"口服|肌肉注射|肌内注射|静脉滴注|静脉注射|皮下注射")
+DOSAGE_FORM_SUFFIX = re.compile(
+    r"(?:肠溶|缓释|控释|分散|咀嚼|阴道|泡腾|口崩|滴丸)?"
+    r"(?:片|胶囊|颗粒|注射液|口服液|滴眼液|滴剂|软膏|乳膏|凝胶|栓剂?|喷雾剂|粉针剂|粉|散|丸|液)$"
+)
 MIN_COMBINED_MEDICATION_COUNT = 3
 MIN_DISEASE_MEDICATION_COUNT = 2
+
+
+def disease_plan_minimums(plan):
+    plan_id = str(plan.get("id", "")).strip() or "未命名疾病方案"
+    combined = plan.get("minimumCombinedMedicationCount", MIN_COMBINED_MEDICATION_COUNT)
+    disease = plan.get("minimumDiseaseMedicationCount", MIN_DISEASE_MEDICATION_COUNT)
+    if not isinstance(combined, int) or not 1 <= combined <= 5:
+        raise ValueError(f"{plan_id}的minimumCombinedMedicationCount必须为1至5的整数")
+    if not isinstance(disease, int) or not 0 <= disease <= 4:
+        raise ValueError(f"{plan_id}的minimumDiseaseMedicationCount必须为0至4的整数")
+    if combined < 1 + disease:
+        raise ValueError(f"{plan_id}的总用药最低数量不能小于当前产品加疾病治疗药数量")
+    if combined < MIN_COMBINED_MEDICATION_COUNT or disease < MIN_DISEASE_MEDICATION_COUNT:
+        if not str(plan.get("medicationCountRationale", "")).strip():
+            raise ValueError(f"{plan_id}降低用药最低数量时必须提供medicationCountRationale")
+    return combined, disease
 
 
 def minimum_unique_medication_plan_count(patient_count):
     if patient_count <= 0:
         return 0
-    return min(patient_count, max(10, math.ceil(math.sqrt(patient_count))))
+    return math.ceil(patient_count / 100)
 
 
 def load_json(path):
@@ -118,10 +138,74 @@ def validated_medication(raw, patient):
     return medication
 
 
+def regimen_variant_count(raw_medication):
+    variants = raw_medication.get("regimenVariants", [])
+    if variants is None:
+        return 1
+    if not isinstance(variants, list):
+        raise ValueError(f'{raw_medication.get("drugName", "")}的regimenVariants必须为数组')
+    return len(variants) or 1
+
+
+def apply_regimen_variant(raw_medication, variant_index):
+    medication = dict(raw_medication)
+    variants = medication.pop("regimenVariants", []) or []
+    if not variants:
+        return medication
+
+    variant = variants[variant_index % len(variants)]
+    if not isinstance(variant, dict):
+        raise ValueError(f'{medication.get("drugName", "")}的regimenVariants元素必须为对象')
+    if not variant.get("evidence"):
+        raise ValueError(f'{medication.get("drugName", "")}的regimenVariants必须提供药品依据')
+    invalid_fields = set(variant) - {
+        "displayName", "specification", "singleDose", "route", "frequency",
+        "medicationTime", "treatmentDays", "precautions", "evidence",
+    }
+    if invalid_fields:
+        raise ValueError(
+            f'{medication.get("drugName", "")}的regimenVariants包含不允许字段：'
+            f'{"、".join(sorted(invalid_fields))}'
+        )
+    medication.update(variant)
+    for field in REQUIRED_MEDICATION_FIELDS:
+        if medication.get(field) in (None, ""):
+            raise ValueError(f'{medication.get("drugName", "")}的regimenVariants覆盖后缺少{field}')
+    return medication
+
+
 def safe_for_allergy(medication, allergy):
+    return allergy_conflict_keyword(medication, allergy) is None
+
+
+def allergy_conflict_keyword(medication, allergy):
     if allergy == "无":
-        return True
-    return not text_contains_any(allergy, medication.get("avoidIfAllergyContains", []))
+        return None
+    normalized_allergy = re.sub(r"[\s,，、；;:：()（）\[\]【】]", "", str(allergy))
+    drug_name = str(medication.get("drugName", "")).strip()
+    normalized_drug_name = re.sub(r"[\s,，、；;:：()（）\[\]【】]", "", drug_name)
+    keywords = [str(value).strip() for value in medication.get("avoidIfAllergyContains", [])]
+    if normalized_drug_name:
+        keywords.append(normalized_drug_name)
+        generic_name = DOSAGE_FORM_SUFFIX.sub("", normalized_drug_name)
+        if len(generic_name) >= 2:
+            keywords.append(generic_name)
+    for keyword in keywords:
+        normalized_keyword = re.sub(r"[\s,，、；;:：()（）\[\]【】]", "", keyword)
+        if normalized_keyword and normalized_keyword in normalized_allergy:
+            return keyword
+    return None
+
+
+def ensure_medications_safe_for_allergy(medications, patient):
+    for medication in medications:
+        keyword = allergy_conflict_keyword(medication, patient["allergyHistory"])
+        if keyword:
+            raise ValueError(
+                f'{patient["userid"]}既往过敏史{patient["allergyHistory"]}与药品'
+                f'{medication.get("drugName", "")}冲突（匹配：{keyword}），停止生成；'
+                "请补充安全替代方案或人工审核"
+            )
 
 
 def prescription_entry(medication):
@@ -168,6 +252,7 @@ def validate_profile(profile):
             raise ValueError(f"{plan_id}疾病方案缺少权威依据")
         if not isinstance(plan.get("allowProductOnly"), bool):
             raise ValueError(f"{plan_id}必须显式设置allowProductOnly")
+        disease_plan_minimums(plan)
         if not isinstance(plan.get("medicationGroups", []), list):
             raise ValueError(f"{plan_id}的medicationGroups必须为数组")
         for group in plan.get("medicationGroups", []):
@@ -219,6 +304,32 @@ def choose_medication_combination(selected_groups, combination_index):
     return medications
 
 
+def medication_combination_count(selected_groups):
+    count = 1
+    for _, alternatives in selected_groups:
+        count *= len(alternatives)
+    return count
+
+
+def apply_regimen_variants(raw_medications, variant_index):
+    medications = []
+    remaining_index = variant_index
+    for raw_medication in raw_medications:
+        medications.append(apply_regimen_variant(raw_medication, remaining_index))
+        remaining_index //= regimen_variant_count(raw_medication)
+    return medications
+
+
+def medication_plan_signature(medications):
+    return tuple(
+        tuple(str(medication.get(field, "")).strip() for field in (
+            "drugName", "displayName", "specification", "singleDose", "frequency",
+            "medicationTime", "treatmentDays",
+        ))
+        for medication in medications
+    )
+
+
 def _valid_search_candidate(candidate):
     if not isinstance(candidate, dict):
         return False
@@ -263,7 +374,8 @@ def maybe_search_and_extend_profile(profile, patients, search_fn=None, audit_pat
             continue
         searched_plans.add(plan_id)
         selected_groups = safe_group_alternatives(disease_plan, patient)
-        if len(selected_groups) >= MIN_DISEASE_MEDICATION_COUNT:
+        _, minimum_disease = disease_plan_minimums(disease_plan)
+        if len(selected_groups) >= minimum_disease:
             audit.append({"planId": plan_id, "disease": patient["disease"], "status": "not_needed"})
             continue
 
@@ -338,7 +450,11 @@ def main():
     validate_profile(profile)
 
     records, medication_items, reviewed_patients = [], [], []
+    medication_plan_signatures = []
     disease_medication_names_by_userid = {}
+    minimum_combined_by_userid = {}
+    minimum_disease_by_userid = {}
+    medication_count_rationale_by_userid = {}
     combination_counters = defaultdict(int)
     for patient in patients:
         raw_medications = []
@@ -347,6 +463,7 @@ def main():
         raw_medications.extend(profile.get("directProductAdjuncts", []))
 
         disease_plan = choose_disease_plan(profile, patient)
+        minimum_combined, minimum_disease = disease_plan_minimums(disease_plan)
         selected_groups = safe_group_alternatives(disease_plan, patient)
         combination_key = (
             disease_plan["id"],
@@ -357,11 +474,14 @@ def main():
         )
         combination_index = combination_counters[combination_key]
         combination_counters[combination_key] += 1
-        disease_medications = choose_medication_combination(selected_groups, combination_index)
-        if profile["productType"] == "用药" and len(disease_medications) < MIN_DISEASE_MEDICATION_COUNT:
+        disease_combination_count = medication_combination_count(selected_groups)
+        disease_medications = choose_medication_combination(
+            selected_groups, combination_index % disease_combination_count
+        )
+        if profile["productType"] == "用药" and len(disease_medications) < minimum_disease:
             raise ValueError(
                 f'{patient["userid"]}（疾病：{patient["disease"]}）匹配疾病方案{disease_plan["id"]}后'
-                f'仅生成疾病治疗药{len(disease_medications)}种，至少需要{MIN_DISEASE_MEDICATION_COUNT}种；'
+                f'仅生成疾病治疗药{len(disease_medications)}种，至少需要{minimum_disease}种；'
                 "直接产品辅助品不计入数量，请补充有疾病依据且通过过敏/禁忌筛选的候选药"
             )
         if profile["productType"] != "用药" and not disease_medications and not disease_plan["allowProductOnly"]:
@@ -371,12 +491,20 @@ def main():
 
         if not raw_medications:
             raise ValueError(f'{patient["userid"]}没有生成任何用药')
+        variant_index = combination_index // disease_combination_count
+        raw_medications = apply_regimen_variants(raw_medications, variant_index)
+        ensure_medications_safe_for_allergy(raw_medications, patient)
         medications = [validated_medication(raw, patient) for raw in raw_medications]
         names = [item["drugName"] for item in medications]
         if len(names) != len(set(names)):
             raise ValueError(f'{patient["userid"]}联合用药出现重复药品')
         if len(names) > 5:
             raise ValueError(f'{patient["userid"]}联合用药超过5项，需人工复核')
+        if profile["productType"] == "用药" and len(names) < minimum_combined:
+            raise ValueError(
+                f'{patient["userid"]}（疾病：{patient["disease"]}）匹配疾病方案{disease_plan["id"]}后'
+                f'联合用药{len(names)}种，至少需要{minimum_combined}种'
+            )
 
         surgery_name = choose_surgery(profile, patient)
         records.append({
@@ -385,6 +513,11 @@ def main():
             "prescriptionList": " + ".join(prescription_entry(item) for item in medications),
             "surgeryName": surgery_name,
         })
+        minimum_combined_by_userid[patient["userid"]] = minimum_combined
+        minimum_disease_by_userid[patient["userid"]] = minimum_disease
+        medication_count_rationale_by_userid[patient["userid"]] = str(
+            disease_plan.get("medicationCountRationale", "")
+        ).strip()
         for medication in medications:
             medication_items.append({
                 "userid": patient["userid"],
@@ -414,8 +547,9 @@ def main():
             ),
             "medicationCycle": cycle,
         })
+        medication_plan_signatures.append(medication_plan_signature(medications))
 
-    unique_medication_plan_count = len({patient["medicationPlan"] for patient in reviewed_patients})
+    unique_medication_plan_count = len(set(medication_plan_signatures))
     minimum_unique_plan_count = minimum_unique_medication_plan_count(len(patients))
     unique_plan_target_met = unique_medication_plan_count >= minimum_unique_plan_count
 
@@ -447,6 +581,9 @@ def main():
             "evidence": profile["evidence"],
             "minimumCombinedMedicationCount": MIN_COMBINED_MEDICATION_COUNT,
             "minimumDiseaseMedicationCount": MIN_DISEASE_MEDICATION_COUNT,
+            "minimumCombinedMedicationCountByUserid": minimum_combined_by_userid,
+            "minimumDiseaseMedicationCountByUserid": minimum_disease_by_userid,
+            "medicationCountRationaleByUserid": medication_count_rationale_by_userid,
             "minimumUniqueMedicationPlanCount": minimum_unique_plan_count,
             "uniqueMedicationPlanCount": unique_medication_plan_count,
             "uniqueMedicationPlanPriority": "recommended",

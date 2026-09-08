@@ -20,7 +20,14 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.5.0"', frontmatter)
+        self.assertIn('version: "1.9.0"', frontmatter)
+
+    def test_documents_patient_level_allergy_screening_for_every_output_drug(self):
+        for document in [self.skill, self.contract, self.clinical_rules]:
+            self.assertIn("当前产品", document)
+            self.assertIn("直接产品辅助品", document)
+            self.assertIn("最终输出前", document)
+            self.assertIn("停止生成", document)
 
     def test_documents_automatic_zero_candidate_search_safety(self):
         for document in [self.skill, self.contract, self.clinical_rules]:
@@ -40,10 +47,11 @@ class SkillContractTest(unittest.TestCase):
 
     def test_documents_patient_count_scaled_plan_diversity(self):
         for document in [self.skill, self.contract, self.clinical_rules]:
-            self.assertIn("min(患者数, max(10, ceil(sqrt(患者数))))", document)
+            self.assertIn("ceil(患者数/100)", document)
             self.assertIn("数量越大", document)
             self.assertIn("确定性轮换", document)
             self.assertIn("候选组合不足", document)
+            self.assertIn("regimenVariants", document)
             self.assertIn("停止生成", document)
             self.assertIn("不得用无关药品凑数", document)
 
@@ -57,14 +65,16 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn("用药方案字段不得包含“用药草案：”", document)
             self.assertIn("prescriptionList", document)
 
-    def test_monthly_medication_rules_require_three_disease_related_medications(self):
+    def test_monthly_medication_rules_document_evidenced_plan_minimums(self):
         for document in [self.skill, self.contract, self.clinical_rules]:
-            self.assertIn("至少 3 种", document)
-            self.assertIn("至少 2 种疾病治疗药", document)
+            self.assertIn("minimumCombinedMedicationCount", document)
+            self.assertIn("minimumDiseaseMedicationCount", document)
+            self.assertIn("medicationCountRationale", document)
+            self.assertIn("默认", document)
             self.assertIn("直接产品辅助品不计入", document)
-        for obsolete_rule in ["单药合理时保留单药", "不得强制填充联合用药", "联合用药数量只由"]:
-            self.assertNotIn(obsolete_rule, self.skill)
-            self.assertNotIn(obsolete_rule, self.clinical_rules)
+            self.assertIn("不得用无关药品凑数", document)
+        self.assertIn("念珠菌性阴道炎", self.skill)
+        self.assertIn("单药或双药", self.clinical_rules)
 
     def test_skill_documents_failure_instead_of_unrelated_medication_filling(self):
         for expected in ["停止生成", "不得用无关药品凑数", "过敏", "疾病依据"]:

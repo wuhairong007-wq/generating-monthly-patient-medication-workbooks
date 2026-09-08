@@ -69,6 +69,28 @@ def candidate(name):
 
 
 class SearchFallbackTest(unittest.TestCase):
+    def test_evidenced_product_only_plan_does_not_trigger_search(self):
+        calls = []
+
+        def search_fn(product_name, disease):
+            calls.append((product_name, disease))
+            raise AssertionError("product-only plan should not trigger search")
+
+        original = profile()
+        plan = original["diseasePlans"][0]
+        plan["allowProductOnly"] = True
+        plan["minimumCombinedMedicationCount"] = 1
+        plan["minimumDiseaseMedicationCount"] = 0
+        plan["medicationCountRationale"] = "产品说明书支持单药治疗"
+
+        extended, audit = generate_payload.maybe_search_and_extend_profile(
+            original, [patient()], search_fn=search_fn,
+        )
+
+        self.assertEqual(calls, [])
+        self.assertEqual(extended["diseasePlans"][0]["medicationGroups"], [])
+        self.assertEqual(audit[0]["status"], "not_needed")
+
     def test_extends_empty_plan_from_complete_search_candidates(self):
         calls = []
 

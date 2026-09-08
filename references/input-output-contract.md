@@ -101,13 +101,13 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 每个 `diseasePlan.when` 必须包含 `diseaseEqualsAny` 或 `diseaseContainsAny`，每位患者必须且只能匹配一个疾病方案。无匹配或多匹配直接停止生成。
 
-`allowProductOnly` 必须显式填写布尔值，用于 schema v2 兼容和器械流程判断。在 `产品类型=用药` 时，该字段不能放宽最小数量规则：每位患者的 `combinedMedication` 至少 3 种，且必须从其唯一匹配的疾病方案中选出至少 2 种疾病治疗药。直接产品辅助品不计入疾病治疗药数量；不足时停止生成。
+`allowProductOnly` 必须显式填写布尔值，用于 schema v2 兼容和器械流程判断。疾病方案未设置 `minimumCombinedMedicationCount` 和 `minimumDiseaseMedicationCount` 时，用药流程默认分别为 3 和 2。只有产品说明书或直接相关指南支持时，方案才可以声明较低的数值，并提供非空 `medicationCountRationale`。例如，单药方案可使用 `1/0`，双药方案可使用 `2/1`。直接产品辅助品不计入疾病治疗药数量；实际数量不足对应方案门槛时停止生成。
 
-不同疾病可以在分别配置疾病方案和独立依据的前提下使用相同候选药，但最终完全相同的用药方案跨疾病只计 1 种。用药方案去重目标为 `min(患者数, max(10, ceil(sqrt(患者数))))`，属于推荐优先级而非必须条件；患者数量越大，推荐目标越高。每个疾病方案应优先配置足够的同疾病、同治疗角色候选药，生成器按输入顺序在通过过敏/禁忌筛选的候选组合间确定性轮换。候选组合不足时继续生成并记录实际值与目标差额，不得用无关药品凑数。
+不同疾病可以在分别配置疾病方案和独立依据的前提下使用相同候选药，但最终完全相同的用药方案跨疾病只计 1 种。用药方案去重目标为 `ceil(患者数/100)`，即每增加 100 条记录增加 1 组，属于推荐优先级而非必须条件；记录数量越大，推荐目标越高。每个疾病方案应优先配置足够的同疾病、同治疗角色候选药；同一药品有多种说明书或直接相关指南支持的给药方案时，可使用 `regimenVariants` 配置每种变体的规格、剂量、途径、频次、时段、疗程、注意事项和药品依据。生成器按输入顺序在通过过敏/禁忌筛选的候选组合和变体间确定性轮换。去重以药品、规格、剂量、频次、时段和疗程的完整给药方案计算；候选组合不足时继续生成并记录实际值与目标差额，不得用无关药品凑数。
 
 `when` 可使用：`diseaseEqualsAny`、`diseaseContainsAny`、`genderAny`、`ageMin`、`ageMax`、`allergyContainsAny`、`allergyNotContainsAny`、`aeEqualsAny`。同一对象中的条件为 AND，数组内部为 OR。
 
-每个候选药可使用 `avoidIfAllergyContains`。脚本按顺序选择第一种对当前过敏史安全的方案；没有安全替代且 `required=false` 时跳过，不得随意补药。
+每个候选药可使用 `avoidIfAllergyContains`，用于成分、药物类别或已知交叉过敏关系；复杂交叉过敏不得仅由药名猜测，必须在 profile 明确配置。脚本还会检查药名（去除常见剂型后）是否直接命中过敏史，例如“阿司匹林过敏”会排除“阿司匹林肠溶片”。当前产品、直接产品辅助品、疾病治疗药和自动检索补充药均须通过患者级过敏筛选；最终输出前再次检查全部待输出药物。候选药冲突时按顺序选择有疾病依据的安全替代药；当前产品或直接产品辅助品冲突，或任一药物在最终输出前仍冲突时，停止生成并指出 userid、既往过敏史和冲突药名，要求补充安全替代方案或人工审核。没有安全替代且 `required=false` 时跳过，不得随意补药。
 
 器械 profile 的 `surgeryRules` 结构：
 
@@ -134,7 +134,9 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 用药方案字段不得包含“用药草案：”、性别、年龄、疾病、过敏史、审核说明或注意事项等长文本。安全与审核内容继续保留在逐药 `precautions` 和 `records[].prescriptionList`，不得因简化展示字段而删除。
 
-用药 payload 的 `meta` 必须包含 `minimumCombinedMedicationCount: 3`、`minimumDiseaseMedicationCount: 2`、`minimumUniqueMedicationPlanCount`、`uniqueMedicationPlanCount` 和 `diseaseMedicationNamesByUserid`。其中去重目标按 `min(患者数, max(10, ceil(sqrt(患者数))))` 计算，仅作为推荐优先级；`meta` 还应记录 `uniqueMedicationPlanPriority`、`uniqueMedicationPlanTargetMet` 和 `uniqueMedicationPlanShortfall`。构建器和最终验证器必须重算实际去重数并校验元数据一致性，但不得因未达成推荐目标而失败。`diseaseMedicationNamesByUserid` 逐 userid 记录从当前患者唯一 `diseasePlan.medicationGroups` 选出的药名；复溶液、稀释液等直接产品辅助品不计入该映射。药品产品必须位于 `combinedMedication` 首项，至少 2 种疾病治疗药必须有当前疾病的独立依据并通过患者过敏/禁忌筛选。
+用药 payload 的 `meta` 必须包含兼容默认值 `minimumCombinedMedicationCount: 3`、`minimumDiseaseMedicationCount: 2`、`minimumUniqueMedicationPlanCount`、`uniqueMedicationPlanCount` 和 `diseaseMedicationNamesByUserid`。生成器还必须写入 `minimumCombinedMedicationCountByUserid` 、`minimumDiseaseMedicationCountByUserid` 和 `medicationCountRationaleByUserid`，以记录每位患者所匹配方案的实际门槛和降低门槛依据。构建器和最终验证器必须使用这些患者级值；映射缺失时回退到 3/2 兼容默认。其中去重目标按 `ceil(患者数/100)` 计算，仅作为推荐优先级；去重依据为药品、规格、剂量、频次、时段和疗程的完整给药方案。`meta` 还应记录 `uniqueMedicationPlanPriority`、`uniqueMedicationPlanTargetMet` 和 `uniqueMedicationPlanShortfall`。构建器和最终验证器必须重算实际去重数并校验元数据一致性，但不得因未达成推荐目标而失败。`diseaseMedicationNamesByUserid` 逐 userid 记录从当前患者唯一 `diseasePlan.medicationGroups` 选出的药名；复溶液、稀释液等直接产品辅助品不计入该映射。药品产品必须位于 `combinedMedication` 首项，且必须满足当前患者方案的最低疾病治疗药数，不得用无关药品补足。
+
+每个 `diseasePlan` 可选声明 `minimumCombinedMedicationCount` 和 `minimumDiseaseMedicationCount`，二者必须满足 `minimumCombinedMedicationCount >= 1 + minimumDiseaseMedicationCount`。任一值低于默认值 3/2 时，必须提供非空 `medicationCountRationale`。
 
 当安全筛选后某个匹配疾病方案的疾病治疗药为 0 种时，生成器默认自动检索候选药；设置 `AUTO_MEDICATION_SEARCH=0` 可关闭。检索器只抓取 `nmpa.gov.cn`、`nhc.gov.cn`、`gov.cn`、`cma.org.cn`、`csu.org.cn` 等白名单来源页，不把搜索摘要、营销页或论坛作为依据。每个自动候选必须提供完整 `specification`、`singleDose`、`route`、`frequency`、`medicationTime` 和正整数 `treatmentDays`；候选字段不完整时仅记录在 `searchAudit` 并停止。`meta.searchAudit` 至少记录疾病方案、查询、来源 URL/标题、状态、候选数和错误信息；检索不能读取 13 列输入中的旧联合用药或用药方案文本。
 

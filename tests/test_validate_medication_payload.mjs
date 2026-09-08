@@ -5,8 +5,8 @@ import {
   validateMedicationPlanFields,
 } from "../scripts/validate_medication_payload.mjs";
 
-function payload({ combinedMedication, diseaseMedicationNames, productType = "用药" }) {
-  return {
+function payload({ combinedMedication, diseaseMedicationNames, minimumsByUserid, productType = "用药" }) {
+  const value = {
     meta: {
       productType,
       productName: "当前产品",
@@ -23,6 +23,12 @@ function payload({ combinedMedication, diseaseMedicationNames, productType = "�
       },
     ],
   };
+  if (minimumsByUserid) {
+    value.meta.minimumCombinedMedicationCountByUserid = { u1: minimumsByUserid.combined };
+    value.meta.minimumDiseaseMedicationCountByUserid = { u1: minimumsByUserid.disease };
+    value.meta.medicationCountRationaleByUserid = { u1: minimumsByUserid.rationale };
+  }
+  return value;
 }
 
 function medicationPlanPayload(count = 4) {
@@ -99,9 +105,48 @@ assert.throws(
 );
 
 assert.doesNotThrow(() => validateMedicationMinimums(payload({
-  combinedMedication: ["当前产品", "疾病药A", "疾病药B"],
-  diseaseMedicationNames: ["疾病药A", "疾病药B"],
+    combinedMedication: ["当前产品", "疾病药A", "疾病药B"],
+    diseaseMedicationNames: ["疾病药A", "疾病药B"],
 })));
+
+assert.doesNotThrow(() => validateMedicationMinimums(payload({
+  combinedMedication: ["当前产品"],
+  diseaseMedicationNames: [],
+  minimumsByUserid: { combined: 1, disease: 0, rationale: "说明书支持单药方案" },
+})));
+
+assert.doesNotThrow(() => validateMedicationMinimums(payload({
+  combinedMedication: ["当前产品", "疾病药A"],
+  diseaseMedicationNames: ["疾病药A"],
+  minimumsByUserid: { combined: 2, disease: 1, rationale: "指南支持双药方案" },
+})));
+
+assert.throws(
+  () => validateMedicationMinimums(payload({
+    combinedMedication: ["当前产品"],
+    diseaseMedicationNames: [],
+    minimumsByUserid: { combined: 2, disease: 1, rationale: "指南支持双药方案" },
+  })),
+  /联合用药至少需要2项/,
+);
+
+assert.throws(
+  () => validateMedicationMinimums(payload({
+    combinedMedication: ["当前产品"],
+    diseaseMedicationNames: [],
+    minimumsByUserid: { combined: 1, disease: 0, rationale: "" },
+  })),
+  /降低用药最低数量缺少依据说明/,
+);
+
+assert.throws(
+  () => validateMedicationMinimums(payload({
+    combinedMedication: ["当前产品", "疾病药A"],
+    diseaseMedicationNames: ["疾病药A"],
+    minimumsByUserid: { combined: 1, disease: 1, rationale: "指南支持双药方案" },
+  })),
+  /用药最低数量关系无效/,
+);
 
 assert.doesNotThrow(() => validateMedicationMinimums(payload({
   productType: "器械",

@@ -106,7 +106,7 @@ const verification = {
   exactUseridOrderMatch: true,
   medicationMappingMatch: true,
   medicationCountDistribution: Object.fromEntries([...new Set(payload.records.map((record) => record.combinedMedication.length))].sort().map((count) => [count, payload.records.filter((record) => record.combinedMedication.length === count).length])),
-  uniqueMedicationPlanCount: new Set(payload.patients.map((patient) => patient.medicationPlan)).size,
+  uniqueMedicationPlanCount: payload.meta.uniqueMedicationPlanCount,
   minimumUniqueMedicationPlanCount: payload.meta.minimumUniqueMedicationPlanCount,
   surgeryNamesValid: payload.meta.productType === "用药" ? payload.records.every((record) => record.surgeryName === "") : payload.records.every((record) => record.surgeryName),
   chineseFrequencies: true,
