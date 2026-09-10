@@ -68,9 +68,11 @@ for (let index = 0; index < rows.length; index += 1) {
   assert(Number(row[0]) === index + 1, `${record.userid}序号错误`);
   assert(String(row[2] ?? "") === record.disease, `${record.userid}疾病不一致`);
   assert(DISCOVERY_METHODS.has(String(row[4] ?? "")), `${record.userid}发现途径不符合枚举`);
-  assert(["中度（2级）", "重度（3级）"].includes(String(row[6] ?? "")), `${record.userid}严重程度不符合枚举`);
+  assert(["轻度（1级）", "中度（2级）", "重度（3级）"].includes(String(row[6] ?? "")), `${record.userid}严重程度不符合枚举`);
   assert(
-    (row[6] === "重度（3级）" && row[10] === "是") || (row[6] === "中度（2级）" && row[10] === "否"),
+    (row[6] === "重度（3级）" && row[10] === "是")
+      || (row[6] === "中度（2级）" && row[10] === "否")
+      || (row[6] === "轻度（1级）" && row[10] === "否"),
     `${record.userid}严重程度与人工干预映射错误`,
   );
   assert(String(row[11] ?? "") === "", `${record.userid}关联随访记录应为空`);

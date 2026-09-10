@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 TARGET_TAGS = {
+    "轻度患者": ("轻度（1级）", "否"),
     "中度患者": ("中度（2级）", "否"),
     "重度患者": ("重度（3级）", "是"),
 }
@@ -197,7 +198,7 @@ def main():
     source_patients = extracted.get("patients", [])
     selected = [patient for patient in source_patients if patient.get("patientTags", "").strip() in TARGET_TAGS]
     if not selected:
-        raise ValueError("患者标签中没有中度患者或重度患者")
+        raise ValueError("患者标签中没有轻度患者、中度患者或重度患者")
 
     userids = [patient["userid"] for patient in selected]
     if len(userids) != len(set(userids)):

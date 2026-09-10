@@ -20,7 +20,7 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.9.0"', frontmatter)
+        self.assertIn('version: "1.10.0"', frontmatter)
 
     def test_documents_patient_level_allergy_screening_for_every_output_drug(self):
         for document in [self.skill, self.contract, self.clinical_rules]:
@@ -118,6 +118,7 @@ class SkillContractTest(unittest.TestCase):
         ]:
             self.assertIn(field, self.contract)
         self.assertIn("只输出", self.contract)
+        self.assertIn("轻度患者", self.contract)
         self.assertIn("中度患者", self.contract)
         self.assertIn("重度患者", self.contract)
 

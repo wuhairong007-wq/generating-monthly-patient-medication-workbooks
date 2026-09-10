@@ -89,17 +89,17 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
         result, payload = self.run_generator(
             [
                 patient("u0", "无"),
-                patient("u1", "中度患者"),
-                patient("u2", "重度患者"),
-                patient("u3", "轻度患者"),
+                patient("u1", "轻度患者"),
+                patient("u2", "中度患者"),
+                patient("u3", "重度患者"),
             ]
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([item["userid"] for item in payload["records"]], ["u1", "u2"])
-        self.assertEqual([item["userid"] for item in payload["sourcePatients"]], ["u1", "u2"])
+        self.assertEqual([item["userid"] for item in payload["records"]], ["u1", "u2", "u3"])
+        self.assertEqual([item["userid"] for item in payload["sourcePatients"]], ["u1", "u2", "u3"])
         self.assertEqual(payload["meta"]["sourcePatientCount"], 4)
-        self.assertEqual(payload["meta"]["targetPatientCount"], 2)
+        self.assertEqual(payload["meta"]["targetPatientCount"], 3)
         self.assertEqual(payload["meta"]["productName"], "血栓通胶囊")
 
     def test_requires_nonempty_product_name(self):
@@ -119,14 +119,20 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
 
     def test_maps_grade_and_manual_intervention_from_patient_tag(self):
         result, payload = self.run_generator(
-            [patient("u1", "中度患者"), patient("u2", "重度患者")]
+            [
+                patient("u1", "轻度患者"),
+                patient("u2", "中度患者"),
+                patient("u3", "重度患者"),
+            ]
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(payload["records"][0]["severityGrade"], "中度（2级）")
+        self.assertEqual(payload["records"][0]["severityGrade"], "轻度（1级）")
         self.assertEqual(payload["records"][0]["manualIntervention"], "否")
-        self.assertEqual(payload["records"][1]["severityGrade"], "重度（3级）")
-        self.assertEqual(payload["records"][1]["manualIntervention"], "是")
+        self.assertEqual(payload["records"][1]["severityGrade"], "中度（2级）")
+        self.assertEqual(payload["records"][1]["manualIntervention"], "否")
+        self.assertEqual(payload["records"][2]["severityGrade"], "重度（3级）")
+        self.assertEqual(payload["records"][2]["manualIntervention"], "是")
 
     def test_time_precedes_activation_and_generation_is_deterministic(self):
         patients = [patient("stable-user", "中度患者", activated="2026-04-01 01:00:00")]
@@ -264,14 +270,14 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
             self.assertIn(expected, remark)
         self.assertNotIn("草案", remark)
 
-    def test_rejects_input_without_medium_or_severe_patients(self):
+    def test_rejects_input_without_any_target_tag(self):
         result, payload = self.run_generator(
-            [patient("u0", "无"), patient("u1", "轻度患者")]
+            [patient("u0", "无"), patient("u1", "未知标签")]
         )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(payload)
-        self.assertIn("患者标签中没有中度患者或重度患者", result.stderr)
+        self.assertIn("患者标签中没有轻度患者、中度患者或重度患者", result.stderr)
 
 
 @unittest.skipUnless(NODE and NODE_MODULES, "需要CODEX_NODE和CODEX_NODE_MODULES运行工作簿测试")

@@ -6,13 +6,14 @@
 
 ## 筛选与 userid
 
-- 只筛选 `患者标签` 去除首尾空白后严格等于 `中度患者` 或 `重度患者` 的患者。
+- 只筛选 `患者标签` 去除首尾空白后严格等于 `轻度患者`、`中度患者` 或 `重度患者` 的患者。
 - 不模糊匹配，不输出其他标签患者。
 - 保持筛选后患者在输入文件中的原始顺序。
 - userid 必须逐字符保留，不转号、不补齐、不修改、不新增、不去重。
 
 ## 枚举和映射
 
+- `轻度患者` → `severityGrade=轻度（1级）`、`manualIntervention=否`。
 - `中度患者` → `severityGrade=中度（2级）`、`manualIntervention=否`。
 - `重度患者` → `severityGrade=重度（3级）`、`manualIntervention=是`。
 - `discoveryMethod` 只能是 `AI用药随访发现` 或 `患者自评反馈`。

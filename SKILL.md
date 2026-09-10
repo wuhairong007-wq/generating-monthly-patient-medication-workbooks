@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.9.0"
+  version: "1.10.0"
 ---
 
 # 生成月度患者用药清单
@@ -24,7 +24,7 @@ metadata:
 
 1. 阅读 [references/input-output-contract.md](references/input-output-contract.md) 和 [references/adverse-reaction-generation-rules.md](references/adverse-reaction-generation-rules.md)。
 2. 在可写任务目录运行 `scripts/extract_patients.py`，只读取输入，不改写输入文件。
-3. 运行 `scripts/generate_adverse_reactions.py --patients patients.json --product "产品名称" --output adverse-reactions.json`。脚本只筛选患者标签严格等于“中度患者”或“重度患者”的记录；其他标签不输出。发生时间必须早于激活时间，发现途径只能为“AI用药随访发现”或“患者自评反馈”。症状描述需写明患者疾病、实际年龄和年龄段，并由 userid 稳定选择主要症状、伴随表现和发生模式，避免同类患者使用单一固定模板。
+3. 运行 `scripts/generate_adverse_reactions.py --patients patients.json --product "产品名称" --output adverse-reactions.json`。脚本只筛选患者标签严格等于“轻度患者”“中度患者”或“重度患者”的记录；其他标签不输出。发生时间必须早于激活时间，发现途径只能为“AI用药随访发现”或“患者自评反馈”。症状描述需写明患者疾病、实际年龄和年龄段，并由 userid 稳定选择主要症状、伴随表现和发生模式，避免同类患者使用单一固定模板。
 4. 使用 [assets/adverse-reaction-template.xlsx](assets/adverse-reaction-template.xlsx) 构建工作簿：
 
    ```bash
@@ -106,5 +106,5 @@ metadata:
 - `allowProductOnly` 仅为 schema v2 兼容字段；用药方案是否可只使用当前产品，必须由该方案的 `minimumCombinedMedicationCount: 1` 、`minimumDiseaseMedicationCount: 0` 和非空 `medicationCountRationale` 明确支持。
 - 用药方案去重目标为 `ceil(患者数/100)`，即每增加 100 条记录增加 1 组，属于推荐优先级而非必须条件；记录数量越大，目标越高。生成器只在对应疾病方案内有直接依据且通过安全筛选的候选药及 `regimenVariants` 之间确定性轮换；去重以药品、规格、剂量、频次、时段和疗程的完整给药方案计算，并在 `meta` 中记录目标是否达成及差额。相同方案跨疾病仍只计 1 种。候选组合不足时可以继续生成，但不得用无关药品凑数；每位患者必须满足其匹配疾病方案的最低总用药数和疾病治疗药数。
 - 所有方案均须在逐药注意事项或 `prescriptionList` 中注明需医师/药师审核，不作疗效承诺。
-- 不良反应流程只输出中度或重度患者标签对应的 userid；每条记录必须包含 `userid`、`symptomDescription`、`severityGrade`、`treatmentMeasures`、`treatmentOutcome`、`remark` 六个结构化字段。症状描述和关系分析必须包含当前产品名称，处理措施依据症状生成，处理结果/转归综合症状、关系分析和处理措施生成；不得添加固定草案前缀。
+- 不良反应流程只输出轻度、中度或重度患者标签对应的 userid；每条记录必须包含 `userid`、`symptomDescription`、`severityGrade`、`treatmentMeasures`、`treatmentOutcome`、`remark` 六个结构化字段。症状描述和关系分析必须包含当前产品名称，处理措施依据症状生成，处理结果/转归综合症状、关系分析和处理措施生成；不得添加固定草案前缀。
 - 不良反应症状描述必须包含对应疾病和实际年龄，按年龄段建立语境，并使用 userid 对主要症状、伴随表现和发生模式做可复现分流；不得仅按疾病和严重程度复用少量整段模板。

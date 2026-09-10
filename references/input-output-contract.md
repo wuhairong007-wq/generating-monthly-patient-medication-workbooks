@@ -154,7 +154,7 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 ### 筛选范围
 
-- 只输出患者标签严格等于 `中度患者` 或 `重度患者` 的患者。
+- 只输出患者标签严格等于 `轻度患者`、`中度患者` 或 `重度患者` 的患者。
 - 其他标签患者不输出；筛选后保持原始输入顺序。
 - userid 必须逐字符保留，不新增、遗漏、改写、补齐、转号或去重。
 
@@ -175,6 +175,7 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 payload 的 `meta.productName` 保存用户提供的产品名称。每条记录同时包含工作簿字段：`disease`、`occurrenceTime`、`discoveryMethod`、`medicationRelationship`、`manualIntervention`、`followupRecord`。
 
+- `轻度患者` 映射为 `轻度（1级）` 和人工干预 `否`。
 - `中度患者` 映射为 `中度（2级）` 和人工干预 `否`。
 - `重度患者` 映射为 `重度（3级）` 和人工干预 `是`。
 - `discoveryMethod` 只能为 `AI用药随访发现` 或 `患者自评反馈`。

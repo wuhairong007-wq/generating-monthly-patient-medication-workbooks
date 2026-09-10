@@ -18,7 +18,7 @@ const REQUIRED_FIELDS = [
   "userid", "symptomDescription", "severityGrade", "treatmentMeasures", "treatmentOutcome", "remark",
 ];
 const DISCOVERY_METHODS = new Set(["AI用药随访发现", "患者自评反馈"]);
-const SEVERITY_GRADES = new Set(["中度（2级）", "重度（3级）"]);
+const SEVERITY_GRADES = new Set(["轻度（1级）", "中度（2级）", "重度（3级）"]);
 
 function parseArgs(argv) {
   const result = {};
@@ -104,7 +104,8 @@ for (const record of records) {
   assert(SEVERITY_GRADES.has(record.severityGrade), `${record.userid}严重程度不符合枚举`);
   assert(
     (record.severityGrade === "重度（3级）" && record.manualIntervention === "是")
-      || (record.severityGrade === "中度（2级）" && record.manualIntervention === "否"),
+      || (record.severityGrade === "中度（2级）" && record.manualIntervention === "否")
+      || (record.severityGrade === "轻度（1级）" && record.manualIntervention === "否"),
     `${record.userid}严重程度与人工干预映射错误`,
   );
   assert(String(record.followupRecord ?? "") === "", `${record.userid}关联随访记录默认必须为空`);
