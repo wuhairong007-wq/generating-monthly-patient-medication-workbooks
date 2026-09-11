@@ -135,11 +135,11 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(payload["records"][0]["severityGrade"], "轻度（1级）")
+        self.assertEqual(payload["records"][0]["severityGrade"], "轻度")
         self.assertEqual(payload["records"][0]["manualIntervention"], "否")
-        self.assertEqual(payload["records"][1]["severityGrade"], "中度（2级）")
+        self.assertEqual(payload["records"][1]["severityGrade"], "中度")
         self.assertEqual(payload["records"][1]["manualIntervention"], "否")
-        self.assertEqual(payload["records"][2]["severityGrade"], "重度（3级）")
+        self.assertEqual(payload["records"][2]["severityGrade"], "重度")
         self.assertEqual(payload["records"][2]["manualIntervention"], "是")
 
     def test_time_follows_activation_within_service_period_and_is_deterministic(self):
@@ -386,10 +386,10 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             {
                 "userid": "u1",
                 "disease": "脑梗死",
-                "occurrenceTime": "2026-04-11 09:00:00",
+                "occurrenceTime": "2026-04-11 07:30:00",
                 "discoveryMethod": "AI用药随访发现",
                 "symptomDescription": "患者在使用血栓通胶囊期间反馈可能出现头晕或乏力，具体情况需人工核实。",
-                "severityGrade": "中度（2级）",
+                "severityGrade": "中度",
                 "medicationRelationship": "上述表现与血栓通胶囊存在时间关联的可能性，具体因果关系需人工核实。",
                 "treatmentMeasures": "建议人工复核症状和当前用药，必要时联系医师，不自行调整用药。",
                 "treatmentOutcome": "当前资料未提供处理后转归，需在后续随访中核实并记录。",
@@ -400,10 +400,10 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             {
                 "userid": "u2",
                 "disease": "冠心病心绞痛",
-                "occurrenceTime": "2026-04-15 23:59:59",
+                "occurrenceTime": "2026-04-15 21:59:59",
                 "discoveryMethod": "患者自评反馈",
                 "symptomDescription": "患者在使用血栓通胶囊期间反馈可能出现明显乏力或胃部不适，具体情况需人工核实。",
-                "severityGrade": "重度（3级）",
+                "severityGrade": "重度",
                 "medicationRelationship": "上述表现与血栓通胶囊存在时间关联的可能性，具体因果关系需人工核实。",
                 "treatmentMeasures": "建议尽快人工干预并复核当前用药，出现紧急情况及时就医，不自行调整用药。",
                 "treatmentOutcome": "当前资料未提供处理后转归，需在后续随访中核实并记录。",
@@ -458,8 +458,15 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             rendered = load_workbook(workbook_path, read_only=True, data_only=True)
             sheet = rendered.worksheets[0]
             self.assertEqual(sheet["A1"].value, "不良反应（AE）记录清单")
-            self.assertNotIn("草案", sheet["F3"].value)
-            self.assertNotIn("草案", sheet["M3"].value)
+            self.assertNotIn("草案", sheet["E3"].value)
+            self.assertNotIn("草案", sheet["K3"].value)
+            headers = list(next(sheet.iter_rows(min_row=2, max_row=2, values_only=True)))
+            self.assertEqual(len(headers), 11)
+            self.assertNotIn("发现途径", headers)
+            self.assertNotIn("关联随访记录", headers)
+            self.assertEqual(sheet["F3"].value, "中度")
+            self.assertEqual(sheet["F4"].value, "重度")
+            rendered.close()
             self.assertEqual(
                 {path.name for path in preview_dir.glob("*.png")},
                 {"adverse-first.png", "adverse-middle.png", "adverse-last.png"},

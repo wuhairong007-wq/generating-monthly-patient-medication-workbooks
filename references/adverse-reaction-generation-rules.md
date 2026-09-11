@@ -13,16 +13,15 @@
 
 ## 枚举和映射
 
-- `轻度患者` → `severityGrade=轻度（1级）`、`manualIntervention=否`。
-- `中度患者` → `severityGrade=中度（2级）`、`manualIntervention=否`。
-- `重度患者` → `severityGrade=重度（3级）`、`manualIntervention=是`。
+- `轻度患者` → `severityGrade=轻度`、`manualIntervention=否`。
+- `中度患者` → `severityGrade=中度`、`manualIntervention=否`。
+- `重度患者` → `severityGrade=重度`、`manualIntervention=是`。
 - `discoveryMethod` 只能是 `AI用药随访发现` 或 `患者自评反馈`。
 - `followupRecord` 默认空字符串。
 - `severityGrade` 仅为严重程度建议，最终等级由系统规则和人工审核确定。
 
 ## 确定性
 
-- 使用 userid 哈希选择发现途径，同一输入重复运行结果一致。
 - 服务周期为必填参数，脚本通过 `--service-start YYYY-MM-DD` 和 `--service-end YYYY-MM-DD` 接收，写入 `meta.servicePeriod.start/end`。不得根据激活月份或当前日期自行补充；日期非法或开始日晚于结束日时停止生成。
 - 发生时间必须严格晚于激活时间，并处于服务周期内每天 `07:30:00` 至 `21:59:59` 的窗口（北京时间，含两端，支持同一天和跨月周期）。使用 userid 哈希在所有可用日期窗口的整秒闭区间内确定性选择时间；激活当日从激活后第一个整秒开始，其他日期从 `07:30:00` 开始。
 - 目标患者缺少有效激活时间，或激活后在服务周期内没有可用整秒时停止生成并报告 userid；无可用区间时同时报告激活时间和服务周期，不得跳过目标患者、改写激活时间或用确认时间代替。13列提醒表缺少患者标签和激活时间时要求补充18列源表。
@@ -60,4 +59,6 @@
 - `treatmentOutcome`
 - `remark`
 
-工作簿所需附加字段为：`disease`、`occurrenceTime`、`discoveryMethod`、`medicationRelationship`、`manualIntervention`、`followupRecord`。
+工作簿所需附加字段为：`disease`、`occurrenceTime`、`medicationRelationship`、`manualIntervention`。
+
+Excel 输出固定为11列，不输出“发现途径”和“关联随访记录”；payload 中的 `discoveryMethod` 和 `followupRecord` 仅为兼容字段。严重程度只输出 `轻度`、`中度`、`重度`，不带等级后缀。

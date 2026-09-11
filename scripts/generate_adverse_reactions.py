@@ -9,9 +9,9 @@ from pathlib import Path
 
 
 TARGET_TAGS = {
-    "轻度患者": ("轻度（1级）", "否"),
-    "中度患者": ("中度（2级）", "否"),
-    "重度患者": ("重度（3级）", "是"),
+    "轻度患者": ("轻度", "否"),
+    "中度患者": ("中度", "否"),
+    "重度患者": ("重度", "是"),
 }
 DISCOVERY_METHODS = ("AI用药随访发现", "患者自评反馈")
 BRAIN_SYMPTOMS = {
@@ -141,7 +141,7 @@ def symptom_description(patient, severity_grade, product_name, profile):
         f"患者{patient['age']}岁，处于{profile['ageContext']}，基础疾病为{patient['disease']}。"
         f"在使用{product_name}期间反馈可能出现{profile['summary']}，{profile['pattern']}。"
     )
-    if severity_grade == "重度（3级）":
+    if severity_grade == "重度":
         return (
             context
             + "具体起始时间、持续时长、发生频次、伴随危险信号及对日常活动的影响需尽快人工核实。"
@@ -165,7 +165,7 @@ def treatment_measures(patient, severity_grade, symptoms):
         if patient["allergyHistory"] != "无"
         else "并再次确认既往过敏史"
     )
-    if severity_grade == "重度（3级）":
+    if severity_grade == "重度":
         return (
             f"针对反馈的{symptoms}，建议尽快触发人工干预，核实症状事实、当前全部用药及时间关系，{allergy_note}；"
             "记录生命体征和相关危险信号，如症状持续加重或出现紧急情况应及时就医，不自行调整用药。"

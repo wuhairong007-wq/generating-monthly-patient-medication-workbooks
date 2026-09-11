@@ -10,11 +10,10 @@ const artifactToolPath = runtimeRequire.resolve("@oai/artifact-tool");
 const { FileBlob, SpreadsheetFile } = await import(pathToFileURL(artifactToolPath).href);
 
 const HEADERS = [
-  "序号", "患者ID", "疾病", "不良反应发生时间", "发现途径", "不良反应症状描述",
+  "序号", "患者ID", "疾病", "不良反应发生时间", "不良反应症状描述",
   "不良反应严重程度分级", "与用药关系分析", "处理措施", "处理结果/转归",
-  "是否触发人工干预", "关联随访记录", "备注",
+  "是否触发人工干预", "备注",
 ];
-const DISCOVERY_METHODS = new Set(["AI用药随访发现", "患者自评反馈"]);
 
 function parseArgs(argv) {
   const result = {};
@@ -47,7 +46,7 @@ function parseServicePeriod(period) {
 }
 
 function isWithinDailyOccurrenceWindow(value) {
-  const hours = value.getUTCHours() + 8;
+  const hours = (value.getUTCHours() + 8) % 24;
   const minutes = value.getUTCMinutes();
   const seconds = value.getUTCSeconds();
   const total = hours * 3600 + minutes * 60 + seconds;
@@ -87,34 +86,32 @@ for (let index = 0; index < rows.length; index += 1) {
   const patient = patientByUserid.get(record.userid);
   assert(Number(row[0]) === index + 1, `${record.userid}序号错误`);
   assert(String(row[2] ?? "") === record.disease, `${record.userid}疾病不一致`);
-  assert(DISCOVERY_METHODS.has(String(row[4] ?? "")), `${record.userid}发现途径不符合枚举`);
-  assert(["轻度（1级）", "中度（2级）", "重度（3级）"].includes(String(row[6] ?? "")), `${record.userid}严重程度不符合枚举`);
+  assert(["轻度", "中度", "重度"].includes(String(row[5] ?? "")), `${record.userid}严重程度不符合枚举`);
   assert(
-    (row[6] === "重度（3级）" && row[10] === "是")
-      || (row[6] === "中度（2级）" && row[10] === "否")
-      || (row[6] === "轻度（1级）" && row[10] === "否"),
+    (row[5] === "重度" && row[9] === "是")
+      || (row[5] === "中度" && row[9] === "否")
+      || (row[5] === "轻度" && row[9] === "否"),
     `${record.userid}严重程度与人工干预映射错误`,
   );
-  assert(String(row[11] ?? "") === "", `${record.userid}关联随访记录应为空`);
   assert(patient, `${record.userid}缺少源患者`);
   const occurrence = parseDateTime(row[3]);
   assert(occurrence > parseDateTime(patient.activateTime, `${record.userid}激活时间`), `${record.userid}发生时间未晚于激活时间`);
   assert(occurrence >= servicePeriod.start && occurrence <= servicePeriod.end, `${record.userid}发生时间不在服务周期内`);
   assert(isWithinDailyOccurrenceWindow(occurrence), `${record.userid}发生时间不在每日07:30至21:59:59窗口内`);
   assert(String(row[3] ?? "") === record.occurrenceTime, `${record.userid}发生时间与payload不一致`);
-  assert(String(row[5] ?? "") === record.symptomDescription, `${record.userid}症状描述与payload不一致`);
-  assert(String(row[7] ?? "") === record.medicationRelationship, `${record.userid}关系分析与payload不一致`);
-  assert(String(row[8] ?? "") === record.treatmentMeasures, `${record.userid}处理措施与payload不一致`);
-  assert(String(row[9] ?? "") === record.treatmentOutcome, `${record.userid}转归与payload不一致`);
-  assert(String(row[12] ?? "") === record.remark, `${record.userid}备注与payload不一致`);
-  assert(String(row[5] ?? "").includes(productName), `${record.userid}症状描述缺少产品名称`);
-  assert(String(row[7] ?? "").includes(productName), `${record.userid}关系分析缺少产品名称`);
-  assert(!String(row[5] ?? "").includes("草案"), `${record.userid}症状描述包含草案标签`);
-  assert(!String(row[12] ?? "").includes("草案"), `${record.userid}备注包含草案标签`);
+  assert(String(row[4] ?? "") === record.symptomDescription, `${record.userid}症状描述与payload不一致`);
+  assert(String(row[6] ?? "") === record.medicationRelationship, `${record.userid}关系分析与payload不一致`);
+  assert(String(row[7] ?? "") === record.treatmentMeasures, `${record.userid}处理措施与payload不一致`);
+  assert(String(row[8] ?? "") === record.treatmentOutcome, `${record.userid}转归与payload不一致`);
+  assert(String(row[10] ?? "") === record.remark, `${record.userid}备注与payload不一致`);
+  assert(String(row[4] ?? "").includes(productName), `${record.userid}症状描述缺少产品名称`);
+  assert(String(row[6] ?? "").includes(productName), `${record.userid}关系分析缺少产品名称`);
+  assert(!String(row[4] ?? "").includes("草案"), `${record.userid}症状描述包含草案标签`);
+  assert(!String(row[10] ?? "").includes("草案"), `${record.userid}备注包含草案标签`);
 }
 assert(sheet.tables.items.length === 1, "不良反应清单必须且只能包含一个表格对象");
 
-const first = await workbook.inspect({ kind: "region", sheetId: sheet.name, range: `A1:M${Math.min(rows.length + 2, 7)}`, maxChars: 6000 });
+const first = await workbook.inspect({ kind: "region", sheetId: sheet.name, range: `A1:K${Math.min(rows.length + 2, 7)}`, maxChars: 6000 });
 const errors = await workbook.inspect({
   kind: "match",
   searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A",
@@ -128,12 +125,11 @@ const report = {
   rowCount: rows.length,
   distinctUseridCount: new Set(actualUserids).size,
   exactUseridOrderMatch: true,
-  validDiscoveryMethods: true,
   validSeverityAndInterventionMapping: true,
   occurrenceTimesFollowActivation: true,
   occurrenceTimesWithinServicePeriod: true,
+  occurrenceTimesWithinDailyWindow: true,
   servicePeriod: payload.meta.servicePeriod,
-  blankFollowupRecords: true,
   productName,
   productAwareContent: true,
   noDraftPrefixes: true,

@@ -10,15 +10,14 @@ const artifactToolPath = runtimeRequire.resolve("@oai/artifact-tool");
 const { FileBlob, SpreadsheetFile } = await import(pathToFileURL(artifactToolPath).href);
 
 const HEADERS = [
-  "序号", "患者ID", "疾病", "不良反应发生时间", "发现途径", "不良反应症状描述",
+  "序号", "患者ID", "疾病", "不良反应发生时间", "不良反应症状描述",
   "不良反应严重程度分级", "与用药关系分析", "处理措施", "处理结果/转归",
-  "是否触发人工干预", "关联随访记录", "备注",
+  "是否触发人工干预", "备注",
 ];
 const REQUIRED_FIELDS = [
   "userid", "symptomDescription", "severityGrade", "treatmentMeasures", "treatmentOutcome", "remark",
 ];
-const DISCOVERY_METHODS = new Set(["AI用药随访发现", "患者自评反馈"]);
-const SEVERITY_GRADES = new Set(["轻度（1级）", "中度（2级）", "重度（3级）"]);
+const SEVERITY_GRADES = new Set(["轻度", "中度", "重度"]);
 
 function parseArgs(argv) {
   const result = {};
@@ -51,7 +50,7 @@ function parseServicePeriod(period) {
 }
 
 function isWithinDailyOccurrenceWindow(value) {
-  const hours = value.getUTCHours() + 8;
+  const hours = (value.getUTCHours() + 8) % 24;
   const minutes = value.getUTCMinutes();
   const seconds = value.getUTCSeconds();
   const total = hours * 3600 + minutes * 60 + seconds;
@@ -81,7 +80,7 @@ async function savePreview(workbook, sheet, firstRow, lastRow, outputPath) {
   const safeLast = Math.max(safeFirst, lastRow);
   const preview = await workbook.render({
     sheetName: sheet.name,
-    range: `A${safeFirst}:M${safeLast}`,
+    range: `A${safeFirst}:K${safeLast}`,
     scale: 1,
     format: "png",
   });
@@ -120,15 +119,13 @@ for (const record of records) {
   assert(!String(record.remark).includes("人工审核草案："), `${record.userid}备注包含旧草案前缀`);
   assert(!String(record.symptomDescription).includes("草案"), `${record.userid}症状描述包含草案标签`);
   assert(!String(record.remark).includes("草案"), `${record.userid}备注包含草案标签`);
-  assert(DISCOVERY_METHODS.has(record.discoveryMethod), `${record.userid}发现途径不符合枚举`);
   assert(SEVERITY_GRADES.has(record.severityGrade), `${record.userid}严重程度不符合枚举`);
   assert(
-    (record.severityGrade === "重度（3级）" && record.manualIntervention === "是")
-      || (record.severityGrade === "中度（2级）" && record.manualIntervention === "否")
-      || (record.severityGrade === "轻度（1级）" && record.manualIntervention === "否"),
+    (record.severityGrade === "重度" && record.manualIntervention === "是")
+      || (record.severityGrade === "中度" && record.manualIntervention === "否")
+      || (record.severityGrade === "轻度" && record.manualIntervention === "否"),
     `${record.userid}严重程度与人工干预映射错误`,
   );
-  assert(String(record.followupRecord ?? "") === "", `${record.userid}关联随访记录默认必须为空`);
   const patient = patientByUserid.get(record.userid);
   assert(patient, `${record.userid}缺少源患者`);
   const occurrence = parseDateTime(record.occurrenceTime);
@@ -139,11 +136,11 @@ for (const record of records) {
 
 const workbook = await SpreadsheetFile.importXlsx(await FileBlob.load(templatePath));
 const sheet = workbook.worksheets.getItemAt(0);
-const templateHeaders = sheet.getRange("A2:M2").values[0].map((value) => String(value ?? "").trim());
+const templateHeaders = sheet.getRange("A2:K2").values[0].map((value) => String(value ?? "").trim());
 assert(JSON.stringify(templateHeaders) === JSON.stringify(HEADERS), "不良反应模板表头不匹配");
 
 const existingRows = sheet.getUsedRange(true).values.length;
-if (existingRows >= 3) sheet.getRange(`A3:M${existingRows}`).clear({ applyTo: "contents" });
+if (existingRows >= 3) sheet.getRange(`A3:K${existingRows}`).clear({ applyTo: "contents" });
 for (const table of [...(sheet.tables.items ?? [])]) table.delete();
 
 const rows = records.map((record, index) => [
@@ -151,21 +148,19 @@ const rows = records.map((record, index) => [
   record.userid,
   record.disease,
   record.occurrenceTime,
-  record.discoveryMethod,
   record.symptomDescription,
   record.severityGrade,
   record.medicationRelationship,
   record.treatmentMeasures,
   record.treatmentOutcome,
   record.manualIntervention,
-  record.followupRecord,
   record.remark,
 ]);
 await writeRowsInChunks(sheet, rows);
 
 const lastRow = rows.length + 2;
 sheet.getRange("A1").values = [["不良反应（AE）记录清单"]];
-const dataRange = sheet.getRange(`A3:M${lastRow}`);
+const dataRange = sheet.getRange(`A3:K${lastRow}`);
 dataRange.format = {
   font: { name: "Calibri", size: 11 },
   wrapText: true,
@@ -173,16 +168,16 @@ dataRange.format = {
   borders: { preset: "all", style: "thin", color: "#D9D9D9" },
 };
 dataRange.format.rowHeight = 96;
-sheet.getRange(`A3:E${lastRow}`).format.horizontalAlignment = "center";
-sheet.getRange(`G3:G${lastRow}`).format.horizontalAlignment = "center";
-sheet.getRange(`K3:L${lastRow}`).format.horizontalAlignment = "center";
+sheet.getRange(`A3:D${lastRow}`).format.horizontalAlignment = "center";
+sheet.getRange(`F3:F${lastRow}`).format.horizontalAlignment = "center";
+sheet.getRange(`J3:J${lastRow}`).format.horizontalAlignment = "center";
 sheet.getRange(`D3:D${lastRow}`).format.numberFormat = "@";
 
-const widths = [8, 34, 22, 22, 18, 52, 20, 62, 64, 42, 18, 18, 64];
+const widths = [8, 34, 22, 22, 52, 20, 62, 64, 42, 18, 64];
 widths.forEach((width, index) => {
   sheet.getRange(`${columnName(index + 1)}:${columnName(index + 1)}`).format.columnWidth = width;
 });
-const table = sheet.tables.add(`A2:M${lastRow}`, true, "AdverseReactionDraftTable");
+const table = sheet.tables.add(`A2:K${lastRow}`, true, "AdverseReactionDraftTable");
 table.style = "TableStyleMedium2";
 sheet.freezePanes.freezeRows(2);
 sheet.showGridLines = false;
