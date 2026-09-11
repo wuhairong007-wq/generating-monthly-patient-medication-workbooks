@@ -29,10 +29,21 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function parseDateTime(value) {
-  const parsed = new Date(String(value).replace(" ", "T") + "+08:00");
-  assert(!Number.isNaN(parsed.getTime()), `日期时间无效：${value}`);
+function parseDateTime(value, label = "日期时间") {
+  const normalized = String(value).replace(" ", "T");
+  assert(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(normalized), `${label}无效：${value}`);
+  const parsed = new Date(normalized + "+08:00");
+  assert(!Number.isNaN(parsed.getTime()), `${label}无效：${value}`);
+  assert(new Date(parsed.getTime() + 8 * 3600000).toISOString().slice(0, 19) === normalized, `${label}无效：${value}`);
   return parsed;
+}
+
+function parseServicePeriod(period) {
+  assert(/^\d{4}-\d{2}-\d{2}$/.test(period?.start) && /^\d{4}-\d{2}-\d{2}$/.test(period?.end), "服务周期缺失或格式无效，必须为YYYY-MM-DD");
+  const start = parseDateTime(`${period.start} 00:00:00`, "服务周期开始日期");
+  const end = parseDateTime(`${period.end} 23:59:59`, "服务周期结束日期");
+  assert(start <= end, "服务周期开始日期不得晚于结束日期");
+  return { start, end };
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -45,6 +56,7 @@ const reportPath = path.resolve(args.report);
 const records = payload.records ?? [];
 const sourcePatients = payload.sourcePatients ?? [];
 const productName = String(payload.meta?.productName ?? "").trim();
+const servicePeriod = parseServicePeriod(payload.meta?.servicePeriod);
 const expectedUserids = records.map((record) => record.userid);
 const patientByUserid = new Map(sourcePatients.map((patient) => [patient.userid, patient]));
 
@@ -77,7 +89,10 @@ for (let index = 0; index < rows.length; index += 1) {
   );
   assert(String(row[11] ?? "") === "", `${record.userid}关联随访记录应为空`);
   assert(patient, `${record.userid}缺少源患者`);
-  assert(parseDateTime(row[3]) < parseDateTime(patient.activateTime), `${record.userid}发生时间未早于激活时间`);
+  const occurrence = parseDateTime(row[3]);
+  assert(occurrence > parseDateTime(patient.activateTime, `${record.userid}激活时间`), `${record.userid}发生时间未晚于激活时间`);
+  assert(occurrence >= servicePeriod.start && occurrence <= servicePeriod.end, `${record.userid}发生时间不在服务周期内`);
+  assert(String(row[3] ?? "") === record.occurrenceTime, `${record.userid}发生时间与payload不一致`);
   assert(String(row[5] ?? "") === record.symptomDescription, `${record.userid}症状描述与payload不一致`);
   assert(String(row[7] ?? "") === record.medicationRelationship, `${record.userid}关系分析与payload不一致`);
   assert(String(row[8] ?? "") === record.treatmentMeasures, `${record.userid}处理措施与payload不一致`);
@@ -106,7 +121,9 @@ const report = {
   exactUseridOrderMatch: true,
   validDiscoveryMethods: true,
   validSeverityAndInterventionMapping: true,
-  occurrenceTimesPrecedeActivation: true,
+  occurrenceTimesFollowActivation: true,
+  occurrenceTimesWithinServicePeriod: true,
+  servicePeriod: payload.meta.servicePeriod,
   blankFollowupRecords: true,
   productName,
   productAwareContent: true,

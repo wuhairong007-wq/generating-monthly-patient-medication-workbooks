@@ -33,10 +33,21 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function parseDateTime(value) {
-  const parsed = new Date(String(value).replace(" ", "T") + "+08:00");
-  assert(!Number.isNaN(parsed.getTime()), `日期时间无效：${value}`);
+function parseDateTime(value, label = "日期时间") {
+  const normalized = String(value).replace(" ", "T");
+  assert(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(normalized), `${label}无效：${value}`);
+  const parsed = new Date(normalized + "+08:00");
+  assert(!Number.isNaN(parsed.getTime()), `${label}无效：${value}`);
+  assert(new Date(parsed.getTime() + 8 * 3600000).toISOString().slice(0, 19) === normalized, `${label}无效：${value}`);
   return parsed;
+}
+
+function parseServicePeriod(period) {
+  assert(/^\d{4}-\d{2}-\d{2}$/.test(period?.start) && /^\d{4}-\d{2}-\d{2}$/.test(period?.end), "服务周期缺失或格式无效，必须为YYYY-MM-DD");
+  const start = parseDateTime(`${period.start} 00:00:00`, "服务周期开始日期");
+  const end = parseDateTime(`${period.end} 23:59:59`, "服务周期结束日期");
+  assert(start <= end, "服务周期开始日期不得晚于结束日期");
+  return { start, end };
 }
 
 function columnName(columnCount) {
@@ -81,6 +92,7 @@ const payload = JSON.parse(await fs.readFile(payloadPath, "utf8"));
 const sourcePatients = payload.sourcePatients ?? [];
 const records = payload.records ?? [];
 const productName = String(payload.meta?.productName ?? "").trim();
+const servicePeriod = parseServicePeriod(payload.meta?.servicePeriod);
 
 assert(records.length > 0, "不良反应记录为空");
 assert(productName, "产品名称不能为空");
@@ -111,7 +123,9 @@ for (const record of records) {
   assert(String(record.followupRecord ?? "") === "", `${record.userid}关联随访记录默认必须为空`);
   const patient = patientByUserid.get(record.userid);
   assert(patient, `${record.userid}缺少源患者`);
-  assert(parseDateTime(record.occurrenceTime) < parseDateTime(patient.activateTime), `${record.userid}发生时间未早于激活时间`);
+  const occurrence = parseDateTime(record.occurrenceTime);
+  assert(occurrence > parseDateTime(patient.activateTime, `${record.userid}激活时间`), `${record.userid}发生时间未晚于激活时间`);
+  assert(occurrence >= servicePeriod.start && occurrence <= servicePeriod.end, `${record.userid}发生时间不在服务周期内`);
 }
 
 const workbook = await SpreadsheetFile.importXlsx(await FileBlob.load(templatePath));

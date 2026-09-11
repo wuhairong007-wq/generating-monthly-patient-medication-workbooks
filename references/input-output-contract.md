@@ -150,7 +150,15 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 ## 不良反应清单契约
 
-触发文案：`生成不良反应清单 依据文件：/absolute/path/月度患者清单.xlsx 产品：产品名称`。`产品` 为必填规范名称；该工作流不要求产品类型。
+触发文案：`生成不良反应清单 依据文件：/absolute/path/月度患者清单.xlsx 产品：产品名称 服务周期：2026-08-01 至 2026-08-15`。`产品` 为必填规范名称，`服务周期` 必填；该工作流不要求产品类型。
+
+### 服务周期与发生时间
+
+- 将服务周期映射为生成脚本的必填参数 `--service-start YYYY-MM-DD` 和 `--service-end YYYY-MM-DD`。缺失时要求用户补充，不得根据激活日期或当前日期自动推断；非法日期或开始日晚于结束日时停止生成。
+- `meta.servicePeriod` 必须包含 `{ "start": "2026-08-01", "end": "2026-08-15" }` 形式的日期字符串。北京时间开始日 `00:00:00` 和结束日 `23:59:59` 均包含在服务周期内，允许同一天及跨月周期。
+- 每位目标患者的 `occurrenceTime` 必须严格晚于 `activateTime`，且处于服务周期内。下界为服务周期开始时间与激活时间之后第一个整秒的较晚值，上界为服务周期结束日 `23:59:59`；使用 userid 哈希在闭区间内确定性选择整秒。
+- 目标患者激活时间缺失、无效，或激活后在服务周期内没有可用整秒时停止生成，明确指出 userid 和原因；无可用时间时同时列出激活时间和服务周期。不得遗漏目标患者、改写激活时间或生成周期外时间。13列提醒表缺少患者标签和激活时间，不能用确认时间代替；要求补充18列源表。
+- 构建器与独立验证器均校验合法日期、周期顺序及每条发生时间；验证器重新读取工作簿发生时间，核对与 payload 一致。校验报告使用 `occurrenceTimesFollowActivation`、`occurrenceTimesWithinServicePeriod` 和 `servicePeriod`，不再报告旧的时间先后规则。
 
 ### 筛选范围
 
@@ -179,7 +187,7 @@ payload 的 `meta.productName` 保存用户提供的产品名称。每条记录�
 - `中度患者` 映射为 `中度（2级）` 和人工干预 `否`。
 - `重度患者` 映射为 `重度（3级）` 和人工干预 `是`。
 - `discoveryMethod` 只能为 `AI用药随访发现` 或 `患者自评反馈`。
-- `occurrenceTime` 必须严格早于对应患者 `activateTime`。
+- `occurrenceTime` 必须严格晚于对应患者 `activateTime`，并位于 `meta.servicePeriod` 指定的服务周期内。
 - `followupRecord` 默认空字符串。
 - severityGrade 是供人工审核的建议，不是最终系统等级。
 

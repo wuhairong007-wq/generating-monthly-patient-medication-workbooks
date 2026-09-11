@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import shutil
@@ -60,7 +61,10 @@ def extracted(patients):
 
 
 class AdverseReactionGeneratorTest(unittest.TestCase):
-    def run_generator(self, patients, product="血栓通胶囊", include_product=True):
+    def run_generator(
+        self, patients, product="血栓通胶囊", include_product=True,
+        service_start="2026-04-01", service_end="2026-04-30",
+    ):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
             patients_path = temp / "patients.json"
@@ -76,6 +80,10 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
             ]
             if include_product:
                 command.extend(["--product", product])
+            if service_start is not None:
+                command.extend(["--service-start", service_start])
+            if service_end is not None:
+                command.extend(["--service-end", service_end])
             result = subprocess.run(
                 command,
                 capture_output=True,
@@ -134,7 +142,7 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
         self.assertEqual(payload["records"][2]["severityGrade"], "重度（3级）")
         self.assertEqual(payload["records"][2]["manualIntervention"], "是")
 
-    def test_time_precedes_activation_and_generation_is_deterministic(self):
+    def test_time_follows_activation_within_service_period_and_is_deterministic(self):
         patients = [patient("stable-user", "中度患者", activated="2026-04-01 01:00:00")]
 
         first_result, first = self.run_generator(patients)
@@ -145,7 +153,83 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
         self.assertEqual(first["records"], second["records"])
         occurrence = datetime.fromisoformat(first["records"][0]["occurrenceTime"])
         activation = datetime.fromisoformat(patients[0]["activateTime"])
-        self.assertLess(occurrence, activation)
+        self.assertGreater(occurrence, activation)
+        self.assertGreaterEqual(occurrence, datetime(2026, 4, 1))
+        self.assertLessEqual(occurrence, datetime(2026, 4, 30, 23, 59, 59))
+        self.assertEqual(first["meta"]["servicePeriod"], {"start": "2026-04-01", "end": "2026-04-30"})
+
+    def test_requires_both_service_dates(self):
+        for options, flag in [
+            ({"service_start": None}, "--service-start"),
+            ({"service_end": None}, "--service-end"),
+        ]:
+            with self.subTest(flag=flag):
+                result, payload = self.run_generator([patient("u1", "中度患者")], **options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(payload)
+                self.assertIn(flag, result.stderr)
+
+    def test_rejects_invalid_or_reversed_service_period(self):
+        for start, end in [
+            ("", "2026-04-30"), ("2026-02-30", "2026-04-30"),
+            ("2026-4-01", "2026-04-30"), ("2026-04-01", "2026-04-31"),
+            ("2026-04-01T00:00:00", "2026-04-30"), ("2026-05-01", "2026-04-30"),
+        ]:
+            with self.subTest(start=start, end=end):
+                result, payload = self.run_generator(
+                    [patient("u1", "中度患者")], service_start=start, service_end=end,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(payload)
+                self.assertIn("服务周期", result.stderr)
+
+    def test_occurrences_respect_patient_windows_across_months(self):
+        patients = [
+            patient(f"window-{index}", "中度患者", activated=activation)
+            for index, activation in enumerate([
+                "2026-07-01 00:00:00", "2026-07-31 00:00:00",
+                "2026-08-01 12:00:00", "2026-08-15 23:59:58",
+            ] * 25)
+        ]
+        result, payload = self.run_generator(
+            patients, service_start="2026-07-31", service_end="2026-08-15",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for source, record in zip(patients, payload["records"]):
+            occurrence = datetime.fromisoformat(record["occurrenceTime"])
+            self.assertGreater(occurrence, datetime.fromisoformat(source["activateTime"]))
+            self.assertGreaterEqual(occurrence, datetime(2026, 7, 31))
+            self.assertLessEqual(occurrence, datetime(2026, 8, 15, 23, 59, 59))
+
+    def test_one_day_period_includes_last_second(self):
+        result, payload = self.run_generator(
+            [patient("last-second", "重度患者", activated="2026-08-15 23:59:58")],
+            service_start="2026-08-15", service_end="2026-08-15",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["records"][0]["occurrenceTime"], "2026-08-15 23:59:59")
+
+    def test_rejects_patients_without_available_time_in_service_period(self):
+        for activation in ["2026-08-15 23:59:59", "2026-08-16 00:00:00"]:
+            with self.subTest(activation=activation):
+                result, payload = self.run_generator(
+                    [patient("valid-user", "轻度患者", activated="2026-08-01 10:00:00"),
+                     patient("blocked-user", "中度患者", activated=activation)],
+                    service_start="2026-08-01", service_end="2026-08-15",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(payload)
+                for expected in ["blocked-user", "服务周期", "激活时间", "2026-08-15"]:
+                    self.assertIn(expected, result.stderr)
+
+    def test_rejects_missing_or_invalid_activation(self):
+        for activation in ["", "invalid", "2026-02-30 10:00:00", None]:
+            with self.subTest(activation=activation):
+                result, payload = self.run_generator([patient("bad-activation", "中度患者", activated=activation)])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(payload)
+                self.assertIn("bad-activation", result.stderr)
+                self.assertIn("激活时间", result.stderr)
 
     def test_uses_only_allowed_discovery_methods_and_blank_followup(self):
         result, payload = self.run_generator(
@@ -291,7 +375,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             {
                 "userid": "u1",
                 "disease": "脑梗死",
-                "occurrenceTime": "2026-04-09 09:00:00",
+                "occurrenceTime": "2026-04-11 09:00:00",
                 "discoveryMethod": "AI用药随访发现",
                 "symptomDescription": "患者在使用血栓通胶囊期间反馈可能出现头晕或乏力，具体情况需人工核实。",
                 "severityGrade": "中度（2级）",
@@ -305,7 +389,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             {
                 "userid": "u2",
                 "disease": "冠心病心绞痛",
-                "occurrenceTime": "2026-04-09 08:00:00",
+                "occurrenceTime": "2026-04-15 23:59:59",
                 "discoveryMethod": "患者自评反馈",
                 "symptomDescription": "患者在使用血栓通胶囊期间反馈可能出现明显乏力或胃部不适，具体情况需人工核实。",
                 "severityGrade": "重度（3级）",
@@ -325,6 +409,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
                 "targetPatientCount": 2,
                 "targetTags": ["中度患者", "重度患者"],
                 "productName": "血栓通胶囊",
+                "servicePeriod": {"start": "2026-04-11", "end": "2026-04-15"},
             },
             "sourcePatients": source_patients,
             "records": records,
@@ -391,7 +476,69 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             self.assertEqual(report["rowCount"], 2)
             self.assertEqual(report["distinctUseridCount"], 2)
             self.assertTrue(report["exactUseridOrderMatch"])
+            self.assertTrue(report["occurrenceTimesFollowActivation"])
+            self.assertTrue(report["occurrenceTimesWithinServicePeriod"])
+            self.assertEqual(report["servicePeriod"], payload["meta"]["servicePeriod"])
             self.assertTrue(report["formulaErrors"].endswith("matched 0 entries"))
+
+            invalid_cases = [
+                ("before-activation", "2026-04-09 09:00:00", None, "未晚于激活时间"),
+                ("equal-activation", "2026-04-10 10:00:00", None, "未晚于激活时间"),
+                ("before-period", "2026-04-10 23:59:59", None, "服务周期"),
+                ("after-period", "2026-04-16 00:00:00", None, "服务周期"),
+                ("invalid-time", "2026-04-31 09:00:00", None, "日期时间无效"),
+                ("missing-period", None, {}, "服务周期"),
+                ("invalid-period", None, {"start": "2026-04-11", "end": "2026-04-31"}, "服务周期"),
+                ("reversed-period", None, {"start": "2026-04-16", "end": "2026-04-15"}, "服务周期"),
+            ]
+            for label, occurrence, period, error in invalid_cases:
+                with self.subTest(case=label):
+                    invalid_payload = copy.deepcopy(payload)
+                    if occurrence is not None:
+                        invalid_payload["records"][0]["occurrenceTime"] = occurrence
+                    if period is not None:
+                        invalid_payload["meta"]["servicePeriod"] = period
+                    invalid_path = temp / f"{label}.json"
+                    invalid_path.write_text(json.dumps(invalid_payload, ensure_ascii=False), encoding="utf-8")
+                    rejected_output = temp / f"{label}-build.xlsx"
+                    rejected_build = subprocess.run(
+                        [NODE, str(BUILDER), "--payload", str(invalid_path),
+                         "--template", str(TEMPLATE), "--output", str(rejected_output),
+                         "--preview-dir", str(preview_dir)],
+                        env=env, capture_output=True, text=True, check=False,
+                    )
+                    self.assertNotEqual(rejected_build.returncode, 0)
+                    self.assertIn(error, rejected_build.stderr)
+                    self.assertFalse(rejected_output.exists())
+
+                    tampered_path = temp / f"{label}-tampered.xlsx"
+                    tampered = load_workbook(workbook_path)
+                    if occurrence is not None:
+                        tampered.worksheets[0]["D3"] = occurrence
+                    tampered.save(tampered_path)
+                    tampered.close()
+                    rejected_report = temp / f"{label}-report.json"
+                    rejected_verify = subprocess.run(
+                        [NODE, str(VERIFIER), "--payload", str(invalid_path),
+                         "--workbook", str(tampered_path), "--report", str(rejected_report)],
+                        env=env, capture_output=True, text=True, check=False,
+                    )
+                    self.assertNotEqual(rejected_verify.returncode, 0)
+                    self.assertIn(error, rejected_verify.stderr)
+                    self.assertFalse(rejected_report.exists())
+
+            tampered = load_workbook(workbook_path)
+            tampered.worksheets[0]["D3"] = "2026-04-12 12:00:00"
+            tampered_path = temp / "mismatched-time.xlsx"
+            tampered.save(tampered_path)
+            tampered.close()
+            mismatch = subprocess.run(
+                [NODE, str(VERIFIER), "--payload", str(payload_path),
+                 "--workbook", str(tampered_path), "--report", str(temp / "mismatch-report.json")],
+                env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("发生时间与payload不一致", mismatch.stderr)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import re
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -51,9 +52,30 @@ def stable_number(userid, salt):
     return int(digest[:12], 16)
 
 
-def occurrence_time(userid, activated_at):
-    hours = 1 + stable_number(userid, "occurrence") % 72
-    return (activated_at - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+def parse_service_period(start, end):
+    for value in (start, end):
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+            raise ValueError(f"服务周期日期必须为YYYY-MM-DD：{value}")
+    try:
+        service_start = datetime.fromisoformat(start)
+        service_end = datetime.fromisoformat(end).replace(hour=23, minute=59, second=59)
+    except ValueError as error:
+        raise ValueError(f"服务周期日期无效：{start} 至 {end}") from error
+    if service_start > service_end:
+        raise ValueError(f"服务周期开始日期不得晚于结束日期：{start} 至 {end}")
+    return service_start, service_end
+
+
+def occurrence_time(userid, activated_at, service_start, service_end):
+    if activated_at >= service_end:
+        raise ValueError(
+            f"{userid}激活时间{activated_at}之后在服务周期"
+            f"{service_start} 至 {service_end}内无可用发生时间，停止生成"
+        )
+    earliest = max(service_start, activated_at.replace(microsecond=0) + timedelta(seconds=1))
+    available_seconds = int((service_end - earliest).total_seconds()) + 1
+    offset = stable_number(userid, "occurrence") % available_seconds
+    return (earliest + timedelta(seconds=offset)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def discovery_method(userid):
@@ -156,9 +178,14 @@ def remark(patient, severity_grade, product_name):
     )
 
 
-def build_record(patient, product_name):
+def build_record(patient, product_name, service_start, service_end):
     severity_grade, manual_intervention = TARGET_TAGS[patient["patientTags"]]
-    activated_at = datetime.fromisoformat(patient["activateTime"])
+    try:
+        activated_at = datetime.fromisoformat(patient.get("activateTime", ""))
+        if activated_at.tzinfo is not None:
+            raise ValueError("激活时间应使用北京时间本地时间")
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{patient['userid']}激活时间缺失或无效：{patient.get('activateTime')}，停止生成") from error
     profile = symptom_profile(patient)
     symptoms = profile["summary"]
     relationship = relationship_analysis(patient, product_name)
@@ -166,7 +193,7 @@ def build_record(patient, product_name):
     record = {
         "userid": patient["userid"],
         "disease": patient["disease"],
-        "occurrenceTime": occurrence_time(patient["userid"], activated_at),
+        "occurrenceTime": occurrence_time(patient["userid"], activated_at, service_start, service_end),
         "discoveryMethod": discovery_method(patient["userid"]),
         "symptomDescription": symptom_description(patient, severity_grade, product_name, profile),
         "severityGrade": severity_grade,
@@ -188,11 +215,14 @@ def main():
     parser.add_argument("--patients", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--product", required=True)
+    parser.add_argument("--service-start", required=True, help="服务周期开始日期，YYYY-MM-DD（北京时间）")
+    parser.add_argument("--service-end", required=True, help="服务周期结束日期，YYYY-MM-DD（含当日全天）")
     args = parser.parse_args()
 
     product_name = args.product.strip()
     if not product_name:
         raise ValueError("产品名称不能为空")
+    service_start, service_end = parse_service_period(args.service_start, args.service_end)
 
     extracted = load_json(args.patients)
     source_patients = extracted.get("patients", [])
@@ -204,7 +234,7 @@ def main():
     if len(userids) != len(set(userids)):
         raise ValueError("筛选后的userid存在重复")
 
-    records = [build_record(patient, product_name) for patient in selected]
+    records = [build_record(patient, product_name, service_start, service_end) for patient in selected]
     if [record["userid"] for record in records] != userids:
         raise AssertionError("不良反应记录userid顺序不一致")
 
@@ -215,6 +245,7 @@ def main():
             "sourcePatientCount": len(source_patients),
             "targetPatientCount": len(selected),
             "productName": product_name,
+            "servicePeriod": {"start": args.service_start, "end": args.service_end},
             "targetTags": list(TARGET_TAGS),
             "tagCounts": dict(Counter(patient["patientTags"] for patient in selected)),
             "reviewNotice": "生成内容需由药物警戒人员复核，不构成诊断、处方调整或疗效结论。",
