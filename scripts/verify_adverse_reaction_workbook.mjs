@@ -46,6 +46,14 @@ function parseServicePeriod(period) {
   return { start, end };
 }
 
+function isWithinDailyOccurrenceWindow(value) {
+  const hours = value.getUTCHours() + 8;
+  const minutes = value.getUTCMinutes();
+  const seconds = value.getUTCSeconds();
+  const total = hours * 3600 + minutes * 60 + seconds;
+  return total >= 7 * 3600 + 30 * 60 && total <= 21 * 3600 + 59 * 60 + 59;
+}
+
 const args = parseArgs(process.argv.slice(2));
 for (const key of ["payload", "workbook", "report"]) {
   if (!args[key]) throw new Error(`缺少--${key}`);
@@ -92,6 +100,7 @@ for (let index = 0; index < rows.length; index += 1) {
   const occurrence = parseDateTime(row[3]);
   assert(occurrence > parseDateTime(patient.activateTime, `${record.userid}激活时间`), `${record.userid}发生时间未晚于激活时间`);
   assert(occurrence >= servicePeriod.start && occurrence <= servicePeriod.end, `${record.userid}发生时间不在服务周期内`);
+  assert(isWithinDailyOccurrenceWindow(occurrence), `${record.userid}发生时间不在每日07:30至21:59:59窗口内`);
   assert(String(row[3] ?? "") === record.occurrenceTime, `${record.userid}发生时间与payload不一致`);
   assert(String(row[5] ?? "") === record.symptomDescription, `${record.userid}症状描述与payload不一致`);
   assert(String(row[7] ?? "") === record.medicationRelationship, `${record.userid}关系分析与payload不一致`);

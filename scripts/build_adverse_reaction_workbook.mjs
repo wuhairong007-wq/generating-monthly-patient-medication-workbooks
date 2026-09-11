@@ -50,6 +50,14 @@ function parseServicePeriod(period) {
   return { start, end };
 }
 
+function isWithinDailyOccurrenceWindow(value) {
+  const hours = value.getUTCHours() + 8;
+  const minutes = value.getUTCMinutes();
+  const seconds = value.getUTCSeconds();
+  const total = hours * 3600 + minutes * 60 + seconds;
+  return total >= 7 * 3600 + 30 * 60 && total <= 21 * 3600 + 59 * 60 + 59;
+}
+
 function columnName(columnCount) {
   let value = columnCount;
   let name = "";
@@ -126,6 +134,7 @@ for (const record of records) {
   const occurrence = parseDateTime(record.occurrenceTime);
   assert(occurrence > parseDateTime(patient.activateTime, `${record.userid}激活时间`), `${record.userid}发生时间未晚于激活时间`);
   assert(occurrence >= servicePeriod.start && occurrence <= servicePeriod.end, `${record.userid}发生时间不在服务周期内`);
+  assert(isWithinDailyOccurrenceWindow(occurrence), `${record.userid}发生时间不在每日07:30至21:59:59窗口内`);
 }
 
 const workbook = await SpreadsheetFile.importXlsx(await FileBlob.load(templatePath));

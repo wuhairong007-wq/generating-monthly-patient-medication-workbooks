@@ -20,7 +20,7 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.11.0"', frontmatter)
+        self.assertIn('version: "1.12.0"', frontmatter)
 
     def test_adverse_reactions_require_service_period_and_follow_activation(self):
         for document in [self.skill, self.contract, self.rules]:
@@ -28,7 +28,8 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn("严格晚于", document)
             self.assertIn("--service-start", document)
             self.assertIn("--service-end", document)
-            self.assertIn("23:59:59", document)
+            self.assertIn("07:30:00", document)
+            self.assertIn("21:59:59", document)
             self.assertIn("停止生成", document)
             self.assertNotIn("早于激活时间", document)
             self.assertNotIn("小于激活时间", document)

@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.11.0"
+  version: "1.12.0"
 ---
 
 # 生成月度患者用药清单
@@ -33,7 +33,7 @@ metadata:
      --output adverse-reactions.json
    ```
 
-   脚本只筛选患者标签严格等于“轻度患者”“中度患者”或“重度患者”的记录；其他标签不输出。发生时间必须严格晚于激活时间，且位于服务周期开始日 `00:00:00` 至结束日 `23:59:59` 内（北京时间，含两端）。通过 userid 哈希在每位患者的可用秒级区间内确定性选择时间；缺少有效激活时间，或激活后在服务周期内没有可用时间时停止生成，报告 userid、激活时间和服务周期，不得跳过目标患者或修改激活时间。发现途径只能为“AI用药随访发现”或“患者自评反馈”。症状描述需写明患者疾病、实际年龄和年龄段，并由 userid 稳定选择主要症状、伴随表现和发生模式，避免同类患者使用单一固定模板。
+   脚本只筛选患者标签严格等于“轻度患者”“中度患者”或“重度患者”的记录；其他标签不输出。发生时间必须严格晚于激活时间，且位于服务周期内每天 `07:30:00` 至 `21:59:59`（北京时间，含两端）。通过 userid 哈希在每位患者的可用秒级区间内确定性选择时间；缺少有效激活时间，或激活后在服务周期内没有可用时间时停止生成，报告 userid、激活时间和服务周期，不得跳过目标患者或修改激活时间。发现途径只能为“AI用药随访发现”或“患者自评反馈”。症状描述需写明患者疾病、实际年龄和年龄段，并由 userid 稳定选择主要症状、伴随表现和发生模式，避免同类患者使用单一固定模板。
 4. 使用 [assets/adverse-reaction-template.xlsx](assets/adverse-reaction-template.xlsx) 构建工作簿：
 
    ```bash

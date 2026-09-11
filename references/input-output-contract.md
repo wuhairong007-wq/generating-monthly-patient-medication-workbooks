@@ -156,9 +156,9 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 - 将服务周期映射为生成脚本的必填参数 `--service-start YYYY-MM-DD` 和 `--service-end YYYY-MM-DD`。缺失时要求用户补充，不得根据激活日期或当前日期自动推断；非法日期或开始日晚于结束日时停止生成。
 - `meta.servicePeriod` 必须包含 `{ "start": "2026-08-01", "end": "2026-08-15" }` 形式的日期字符串。北京时间开始日 `00:00:00` 和结束日 `23:59:59` 均包含在服务周期内，允许同一天及跨月周期。
-- 每位目标患者的 `occurrenceTime` 必须严格晚于 `activateTime`，且处于服务周期内。下界为服务周期开始时间与激活时间之后第一个整秒的较晚值，上界为服务周期结束日 `23:59:59`；使用 userid 哈希在闭区间内确定性选择整秒。
+- 每位目标患者的 `occurrenceTime` 必须严格晚于 `activateTime`，且处于服务周期内每天 `07:30:00` 至 `21:59:59` 的窗口。使用 userid 哈希在所有可用日期窗口的整秒闭区间内确定性选择时间；激活当日从激活时间之后第一个整秒开始，其他日期从 `07:30:00` 开始。
 - 目标患者激活时间缺失、无效，或激活后在服务周期内没有可用整秒时停止生成，明确指出 userid 和原因；无可用时间时同时列出激活时间和服务周期。不得遗漏目标患者、改写激活时间或生成周期外时间。13列提醒表缺少患者标签和激活时间，不能用确认时间代替；要求补充18列源表。
-- 构建器与独立验证器均校验合法日期、周期顺序及每条发生时间；验证器重新读取工作簿发生时间，核对与 payload 一致。校验报告使用 `occurrenceTimesFollowActivation`、`occurrenceTimesWithinServicePeriod` 和 `servicePeriod`，不再报告旧的时间先后规则。
+- 构建器与独立验证器均校验合法日期、周期顺序、每日时间窗口及每条发生时间；验证器重新读取工作簿发生时间，核对与 payload 一致。校验报告使用 `occurrenceTimesFollowActivation`、`occurrenceTimesWithinServicePeriod` 和 `servicePeriod`，不再报告旧的时间先后规则。
 
 ### 筛选范围
 

@@ -67,15 +67,34 @@ def parse_service_period(start, end):
 
 
 def occurrence_time(userid, activated_at, service_start, service_end):
-    if activated_at >= service_end:
+    windows = []
+    current_day = service_start.date()
+    last_day = service_end.date()
+    while current_day <= last_day:
+        window_start = datetime.combine(current_day, datetime.min.time()).replace(hour=7, minute=30)
+        window_end = datetime.combine(current_day, datetime.min.time()).replace(hour=21, minute=59, second=59)
+        window_start = max(window_start, service_start)
+        window_end = min(window_end, service_end)
+        if current_day < activated_at.date():
+            current_day += timedelta(days=1)
+            continue
+        if current_day == activated_at.date():
+            window_start = max(window_start, activated_at.replace(microsecond=0) + timedelta(seconds=1))
+        if window_start <= window_end:
+            windows.append((window_start, window_end, int((window_end - window_start).total_seconds()) + 1))
+        current_day += timedelta(days=1)
+    total_seconds = sum(item[2] for item in windows)
+    if not total_seconds:
         raise ValueError(
             f"{userid}激活时间{activated_at}之后在服务周期"
-            f"{service_start} 至 {service_end}内无可用发生时间，停止生成"
+            f"{service_start.date()} 至 {service_end.date()}的每日07:30至21:59:59内无可用发生时间，停止生成"
         )
-    earliest = max(service_start, activated_at.replace(microsecond=0) + timedelta(seconds=1))
-    available_seconds = int((service_end - earliest).total_seconds()) + 1
-    offset = stable_number(userid, "occurrence") % available_seconds
-    return (earliest + timedelta(seconds=offset)).strftime("%Y-%m-%d %H:%M:%S")
+    offset = stable_number(userid, "occurrence") % total_seconds
+    for window_start, _, seconds in windows:
+        if offset < seconds:
+            return (window_start + timedelta(seconds=offset)).strftime("%Y-%m-%d %H:%M:%S")
+        offset -= seconds
+    raise AssertionError("发生时间窗口计算错误")
 
 
 def discovery_method(userid):

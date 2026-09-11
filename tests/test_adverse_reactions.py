@@ -156,7 +156,18 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
         self.assertGreater(occurrence, activation)
         self.assertGreaterEqual(occurrence, datetime(2026, 4, 1))
         self.assertLessEqual(occurrence, datetime(2026, 4, 30, 23, 59, 59))
+        self.assertGreaterEqual(occurrence.time(), datetime.strptime("07:30:00", "%H:%M:%S").time())
+        self.assertLessEqual(occurrence.time(), datetime.strptime("21:59:59", "%H:%M:%S").time())
         self.assertEqual(first["meta"]["servicePeriod"], {"start": "2026-04-01", "end": "2026-04-30"})
+
+    def test_occurrence_time_uses_daily_0730_to_2159_window(self):
+        patients = [patient(f"daily-window-{index}", "中度患者", activated="2026-04-01 00:00:00") for index in range(100)]
+        result, payload = self.run_generator(patients)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for record in payload["records"]:
+            occurrence = datetime.fromisoformat(record["occurrenceTime"])
+            self.assertGreaterEqual(occurrence.time(), datetime.strptime("07:30:00", "%H:%M:%S").time())
+            self.assertLessEqual(occurrence.time(), datetime.strptime("21:59:59", "%H:%M:%S").time())
 
     def test_requires_both_service_dates(self):
         for options, flag in [
@@ -188,7 +199,7 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
             patient(f"window-{index}", "中度患者", activated=activation)
             for index, activation in enumerate([
                 "2026-07-01 00:00:00", "2026-07-31 00:00:00",
-                "2026-08-01 12:00:00", "2026-08-15 23:59:58",
+                "2026-08-01 12:00:00", "2026-08-15 21:59:58",
             ] * 25)
         ]
         result, payload = self.run_generator(
@@ -203,11 +214,11 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
 
     def test_one_day_period_includes_last_second(self):
         result, payload = self.run_generator(
-            [patient("last-second", "重度患者", activated="2026-08-15 23:59:58")],
+            [patient("last-second", "重度患者", activated="2026-08-15 21:59:58")],
             service_start="2026-08-15", service_end="2026-08-15",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(payload["records"][0]["occurrenceTime"], "2026-08-15 23:59:59")
+        self.assertEqual(payload["records"][0]["occurrenceTime"], "2026-08-15 21:59:59")
 
     def test_rejects_patients_without_available_time_in_service_period(self):
         for activation in ["2026-08-15 23:59:59", "2026-08-16 00:00:00"]:
@@ -486,6 +497,8 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
                 ("equal-activation", "2026-04-10 10:00:00", None, "未晚于激活时间"),
                 ("before-period", "2026-04-10 23:59:59", None, "服务周期"),
                 ("after-period", "2026-04-16 00:00:00", None, "服务周期"),
+                ("before-daily-window", "2026-04-11 07:29:59", None, "每日07:30"),
+                ("after-daily-window", "2026-04-11 22:00:00", None, "每日07:30"),
                 ("invalid-time", "2026-04-31 09:00:00", None, "日期时间无效"),
                 ("missing-period", None, {}, "服务周期"),
                 ("invalid-period", None, {"start": "2026-04-11", "end": "2026-04-31"}, "服务周期"),
