@@ -74,6 +74,32 @@ class PrepareInterviewSourcesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'dialogueMode'):
             prepare_interview(self.request(dialogueMode='invalid'))
 
+    def test_names_follow_master_ids_after_severity_sorting(self):
+        for header in ['姓名', '患者姓名']:
+            source_tests.write_book(self.root / 'patients.xlsx',
+                ['患者唯一标识', header, '性别', '年龄', '所属地区', '疾病'], [
+                    ['medium', ' 张某 ', '男', 60, '武汉', '疾病A'],
+                    ['high', '李*', '女', 70, '武汉', '疾病A'],
+                ])
+            result = prepare_interview(self.request())
+            self.assertEqual([(row['userid'], row['patientName']) for row in result['selectedPatients']],
+                             [('high', '李*'), ('medium', '张某')])
+
+    def test_duplicate_names_do_not_merge_patients_and_missing_names_are_not_invented(self):
+        source_tests.write_book(self.root / 'patients.xlsx',
+            ['userid', '姓名', '性别', '年龄', '地区', '疾病'], [
+                ['high', '李某', '女', 70, '武汉', '疾病A'],
+                ['medium', '李某', '男', 60, '武汉', '疾病A'],
+            ])
+        result = prepare_interview(self.request())
+        self.assertEqual([row['patientName'] for row in result['selectedPatients']], ['李某', '李某'])
+        self.assertEqual(len({row['userid'] for row in result['selectedPatients']}), 2)
+        source_tests.write_book(self.root / 'patients.xlsx',
+            ['userid', '性别', '年龄', '地区', '疾病'], [
+                ['high', '女', 70, '武汉', '疾病A'], ['medium', '男', 60, '武汉', '疾病A'],
+            ])
+        self.assertEqual([row['patientName'] for row in prepare_interview(self.request())['selectedPatients']], ['', ''])
+
     def test_monthly_five_sources_keep_severity_period_and_patient_scope(self):
         reminder = self.root/'reminders.xlsx'
         source_tests.write_book(reminder, ['患者唯一标识','联合用药','用药方案确认时间','用药方案','用药周期'], [

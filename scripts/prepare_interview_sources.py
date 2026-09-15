@@ -102,9 +102,13 @@ def prepare_interview(request):
     if len(eligible) < count:
         raise ValueError(f"符合不良反应严重度条件的患者可选{len(eligible)}人，需要{count}人，停止生成")
     selected = []
+    patients_by_id = {normalize_patient_id(row): row for row in data["patients"]}
     for userid in eligible[:count]:
+        patient = patients_by_id[userid]
+        patient_name = clean(patient.get("姓名")) or clean(patient.get("患者姓名"))
         selected.append({
             "userid": userid,
+            "patientName": patient_name,
             "severity": {1: "轻度", 2: "中度", 3: "高度"}[severity_by_id[userid]],
             "evidence": {role: [row for row in rows if normalize_patient_id(row) == userid]
                          for role, rows in data.items()},
