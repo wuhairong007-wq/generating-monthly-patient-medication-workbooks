@@ -113,7 +113,7 @@ assert(JSON.stringify(recordUserids) === JSON.stringify(expectedUserids), "记�
 const patientByUserid = new Map(sourcePatients.map((patient) => [patient.userid, patient]));
 for (const record of records) {
   for (const field of REQUIRED_FIELDS) assert(String(record[field] ?? "").trim(), `${record.userid}缺少必填字段${field}`);
-  assert(String(record.symptomDescription).includes(productName), `${record.userid}症状描述缺少产品名称`);
+  assert(!String(record.symptomDescription).includes(productName), `${record.userid}症状描述不得包含当前产品名称`);
   assert(String(record.medicationRelationship).includes(productName), `${record.userid}关系分析缺少产品名称`);
   assert(!String(record.symptomDescription).includes("结构化草案："), `${record.userid}症状描述包含旧草案前缀`);
   assert(!String(record.remark).includes("人工审核草案："), `${record.userid}备注包含旧草案前缀`);

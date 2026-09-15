@@ -136,10 +136,10 @@ def symptom_profile(patient):
     }
 
 
-def symptom_description(patient, severity_grade, product_name, profile):
+def symptom_description(patient, severity_grade, profile):
     context = (
         f"患者{patient['age']}岁，处于{profile['ageContext']}，基础疾病为{patient['disease']}。"
-        f"在使用{product_name}期间反馈可能出现{profile['summary']}，{profile['pattern']}。"
+        f"患者反馈可能出现{profile['summary']}，{profile['pattern']}。"
     )
     if severity_grade == "重度":
         return (
@@ -214,7 +214,7 @@ def build_record(patient, product_name, service_start, service_end):
         "disease": patient["disease"],
         "occurrenceTime": occurrence_time(patient["userid"], activated_at, service_start, service_end),
         "discoveryMethod": discovery_method(patient["userid"]),
-        "symptomDescription": symptom_description(patient, severity_grade, product_name, profile),
+        "symptomDescription": symptom_description(patient, severity_grade, profile),
         "severityGrade": severity_grade,
         "medicationRelationship": relationship,
         "treatmentMeasures": measures,

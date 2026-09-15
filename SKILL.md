@@ -1,19 +1,23 @@
 ---
 name: generating-monthly-patient-medication-workbooks
-description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
+description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks, or asks 生成洞察报告、生成患者调研访谈、生成深度访谈 from service Excel files to create Word reports. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.13.0"
+  version: "1.16.0"
 ---
 
 # 生成月度患者用药清单
 
-把月度患者基础数据转换为可审计的“用药提醒”和“用药方案”工作簿。以确定性脚本处理 userid、模板和校验；以经核对的产品说明书和诊疗依据制定本次产品规则。
+把月度患者基础数据转换为可审计的“用药提醒”和“用药方案”工作簿，并支持不良反应清单、患者洞察报告与患者调研访谈。以确定性脚本处理 userid、模板和校验；以经核对的产品说明书和诊疗依据制定本次产品规则。
 
 **REQUIRED SUB-SKILL:** Use `spreadsheets:Spreadsheets` for workbook authoring and visual verification.
 
 ## 解析请求
 
-先区分工作流：
+先区分工作流，显式触发词优先；各流程使用各自的输入契约：
+
+- `生成洞察报告`：执行 [references/insight-report-workflow.md](references/insight-report-workflow.md)。需要产品、服务周期，以及月度患者清单、患者随访、症状自评、用药提醒四类必填 Excel，可选不良反应清单（常用五表）；兼容原6/7表输入；输出九章 Word 报告。
+- `生成患者调研访谈` 或兼容指令 `生成深度访谈`：执行 [references/patient-interview-workflow.md](references/patient-interview-workflow.md)。需要调研时间、调研数量，以及月度患者清单、患者随访、症状自评、用药提醒、不良反应清单五表，兼容原六表组合。`调研方式` 默认为深度访谈；电话随访输出1份明细 Word，深度访谈输出分析和明细共2份 Word。默认已授权AI模拟访谈，无需人工确认，直接生成完整问答和对应分析，不因缺少真实访谈原文退回提纲。模拟文件名含“模拟”，交付时说明情景性质；用户明确要求真实访谈或仅提纲时按该要求执行。
+- 两项 Word 功能使用当前技能内置 DOCX 模板；洞察报告固定结构和访谈模板包克隆方式各自独立。生成 Word 时使用可用的 `documents:documents` 完成排版及视觉核验，或按参考流程直接调用可用的 `render_docx.py`；缺少渲染环境时如实记录未完成视觉核验。
 
 - 文案包含 `生成不良反应清单 依据文件：... 产品：... 服务周期：YYYY-MM-DD 至 YYYY-MM-DD` 时，执行下方“不良反应清单流程”；`产品` 和 `服务周期` 必填，不要求 `产品类型`。
 - 文案包含 `生成月度患者清单` 且提供产品类型和产品名称时，执行原有用药/器械流程。
@@ -47,7 +51,7 @@ metadata:
 5. 运行 `scripts/verify_adverse_reaction_workbook.mjs --payload adverse-reactions.json --workbook OUTPUT_DIR/不良反应清单.xlsx --report OUTPUT_DIR/verification.json`，独立检查发生时间晚于激活时间、处于 `meta.servicePeriod` 内且与 payload 一致，并检查首段、中段和末段预览。只有校验通过后才交付工作簿。
 6. 默认将结果写入输入文件同级目录；若用户指定输出路径，使用指定路径；目标已存在时附加时间戳，不覆盖。
 
-不良反应内容必须结合患者疾病、年龄、性别、过敏史、患者标签和用户提供的产品名称。症状描述使用产品名称建立用药期间的时间语境；关系分析只能写可能的时间关联并保留其他解释。不得把推测写成已确认发生，不得虚构剂量、检查结果、好转/痊愈或确定性因果关系。逐行字段不得添加“结构化草案：”“人工审核草案：”等固定前缀。`severityGrade` 仅为严重程度建议，最终等级由系统规则确定。目标患者不少于20人时必须统计症状描述重复率；若同一疾病和年龄段被单个固定描述主导，应先扩充分层组合再生成工作簿。
+不良反应内容必须结合患者疾病、年龄、性别、过敏史、患者标签和用户提供的产品名称。症状描述不得包含当前产品信息（包括产品名称、商品名、规格等），仅描述患者疾病、年龄、症状及发生模式；关系分析必须包含当前产品名称，只能写可能的时间关联并保留其他解释。不得把推测写成已确认发生，不得虚构剂量、检查结果、好转/痊愈或确定性因果关系。逐行字段不得添加“结构化草案：”“人工审核草案：”等固定前缀。`severityGrade` 仅为严重程度建议，最终等级由系统规则确定。目标患者不少于20人时必须统计症状描述重复率；若同一疾病和年龄段被单个固定描述主导，应先扩充分层组合再生成工作簿。
 
 不良反应流程从用户文案提取三个参数：
 
@@ -118,5 +122,5 @@ metadata:
 - `allowProductOnly` 仅为 schema v2 兼容字段；用药方案是否可只使用当前产品，必须由该方案的 `minimumCombinedMedicationCount: 1` 、`minimumDiseaseMedicationCount: 0` 和非空 `medicationCountRationale` 明确支持。
 - 用药方案去重目标为 `ceil(患者数/100)`，即每增加 100 条记录增加 1 组，属于推荐优先级而非必须条件；记录数量越大，目标越高。生成器只在对应疾病方案内有直接依据且通过安全筛选的候选药及 `regimenVariants` 之间确定性轮换；去重以药品、规格、剂量、频次、时段和疗程的完整给药方案计算，并在 `meta` 中记录目标是否达成及差额。相同方案跨疾病仍只计 1 种。候选组合不足时可以继续生成，但不得用无关药品凑数；每位患者必须满足其匹配疾病方案的最低总用药数和疾病治疗药数。
 - 所有方案均须在逐药注意事项或 `prescriptionList` 中注明需医师/药师审核，不作疗效承诺。
-- 不良反应流程只输出轻度、中度或重度患者标签对应的 userid；每条记录必须包含 `userid`、`symptomDescription`、`severityGrade`、`treatmentMeasures`、`treatmentOutcome`、`remark` 六个结构化字段。症状描述和关系分析必须包含当前产品名称，处理措施依据症状生成，处理结果/转归综合症状、关系分析和处理措施生成；不得添加固定草案前缀。
+- 不良反应流程只输出轻度、中度或重度患者标签对应的 userid；每条记录必须包含 `userid`、`symptomDescription`、`severityGrade`、`treatmentMeasures`、`treatmentOutcome`、`remark` 六个结构化字段。症状描述不得包含当前产品信息；关系分析必须包含当前产品名称，处理措施依据症状生成，处理结果/转归综合症状、关系分析和处理措施生成；不得添加固定草案前缀。
 - 不良反应症状描述必须包含对应疾病和实际年龄，按年龄段建立语境，并使用 userid 对主要症状、伴随表现和发生模式做可复现分流；不得仅按疾病和严重程度复用少量整段模板。

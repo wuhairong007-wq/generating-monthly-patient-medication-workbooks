@@ -20,7 +20,7 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.13.0"', frontmatter)
+        self.assertIn('version: "1.16.0"', frontmatter)
 
     def test_adverse_reactions_require_service_period_and_follow_activation(self):
         for document in [self.skill, self.contract, self.rules]:
@@ -141,6 +141,12 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("重复率", self.rules)
         self.assertIn("实际年龄", self.skill)
         self.assertIn("重复率", self.skill)
+
+    def test_adverse_reaction_symptoms_exclude_current_product_information(self):
+        for document in [self.skill, self.contract, self.rules]:
+            self.assertIn("症状描述不得包含当前产品信息", document)
+            self.assertNotIn("症状描述和关系分析必须包含当前产品名称", document)
+            self.assertNotIn("症状描述必须包含产品名称", document)
 
     def test_agent_metadata_mentions_adverse_reaction_workbook(self):
         self.assertIn("不良反应", self.agent)

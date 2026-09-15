@@ -326,7 +326,7 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
         self.assertNotEqual(first["treatmentMeasures"], second["treatmentMeasures"])
         self.assertNotEqual(first["treatmentOutcome"], second["treatmentOutcome"])
         for record in payload["records"]:
-            self.assertIn("血栓通胶囊", record["symptomDescription"])
+            self.assertNotIn("血栓通胶囊", record["symptomDescription"])
             self.assertIn("血栓通胶囊", record["medicationRelationship"])
             self.assertIn("人工核实", record["medicationRelationship"])
             self.assertNotIn("结构化草案：", record["symptomDescription"])
@@ -344,6 +344,28 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
             self.assertIn(selected_symptoms, record["treatmentMeasures"])
         self.assertIn("血栓通胶囊", first["treatmentOutcome"])
         self.assertIn("血栓通胶囊", second["treatmentOutcome"])
+
+    def test_symptom_descriptions_exclude_product_information_for_all_target_tags(self):
+        patients = [patient(f"u{index}", tag) for index, tag in enumerate(
+            ["轻度患者", "中度患者", "重度患者"]
+        )]
+        descriptions_by_product = []
+        for product in ["血栓通胶囊", "双歧杆菌四联活菌片(思连康)", "注射用糜蛋白酶"]:
+            with self.subTest(product=product):
+                result, payload = self.run_generator(patients, product=product)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                descriptions = []
+                for source, record in zip(patients, payload["records"]):
+                    description = record["symptomDescription"]
+                    self.assertNotIn(product, description)
+                    self.assertNotIn("思连康", description)
+                    self.assertNotIn("双歧杆菌四联活菌片", description)
+                    self.assertIn(source["disease"], description)
+                    self.assertIn(f"{source['age']}岁", description)
+                    self.assertIn(product, record["medicationRelationship"])
+                    descriptions.append(description)
+                descriptions_by_product.append(descriptions)
+        self.assertTrue(all(items == descriptions_by_product[0] for items in descriptions_by_product))
 
     def test_notes_include_product_age_sex_disease_allergy_without_draft_prefix(self):
         result, payload = self.run_generator(
@@ -388,7 +410,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
                 "disease": "脑梗死",
                 "occurrenceTime": "2026-04-11 07:30:00",
                 "discoveryMethod": "AI用药随访发现",
-                "symptomDescription": "患者在使用血栓通胶囊期间反馈可能出现头晕或乏力，具体情况需人工核实。",
+                "symptomDescription": "患者反馈可能出现头晕或乏力，具体情况需人工核实。",
                 "severityGrade": "中度",
                 "medicationRelationship": "上述表现与血栓通胶囊存在时间关联的可能性，具体因果关系需人工核实。",
                 "treatmentMeasures": "建议人工复核症状和当前用药，必要时联系医师，不自行调整用药。",
@@ -402,7 +424,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
                 "disease": "冠心病心绞痛",
                 "occurrenceTime": "2026-04-15 21:59:59",
                 "discoveryMethod": "患者自评反馈",
-                "symptomDescription": "患者在使用血栓通胶囊期间反馈可能出现明显乏力或胃部不适，具体情况需人工核实。",
+                "symptomDescription": "患者反馈可能出现明显乏力或胃部不适，具体情况需人工核实。",
                 "severityGrade": "重度",
                 "medicationRelationship": "上述表现与血栓通胶囊存在时间关联的可能性，具体因果关系需人工核实。",
                 "treatmentMeasures": "建议尽快人工干预并复核当前用药，出现紧急情况及时就医，不自行调整用药。",
@@ -460,6 +482,9 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             self.assertEqual(sheet["A1"].value, "不良反应（AE）记录清单")
             self.assertNotIn("草案", sheet["E3"].value)
             self.assertNotIn("草案", sheet["K3"].value)
+            for row in (3, 4):
+                self.assertNotIn(payload["meta"]["productName"], sheet[f"E{row}"].value)
+                self.assertIn(payload["meta"]["productName"], sheet[f"G{row}"].value)
             headers = list(next(sheet.iter_rows(min_row=2, max_row=2, values_only=True)))
             self.assertEqual(len(headers), 11)
             self.assertNotIn("发现途径", headers)
@@ -498,6 +523,36 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             self.assertTrue(report["occurrenceTimesWithinServicePeriod"])
             self.assertEqual(report["servicePeriod"], payload["meta"]["servicePeriod"])
             self.assertTrue(report["formulaErrors"].endswith("matched 0 entries"))
+
+            contaminated = copy.deepcopy(payload)
+            contaminated["records"][0]["symptomDescription"] += "涉及血栓通胶囊。"
+            contaminated_payload = temp / "product-in-symptoms.json"
+            contaminated_payload.write_text(json.dumps(contaminated, ensure_ascii=False), encoding="utf-8")
+            rejected_output = temp / "product-in-symptoms-build.xlsx"
+            rejected_build = subprocess.run(
+                [NODE, str(BUILDER), "--payload", str(contaminated_payload),
+                 "--template", str(TEMPLATE), "--output", str(rejected_output),
+                 "--preview-dir", str(preview_dir)],
+                env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(rejected_build.returncode, 0)
+            self.assertIn("症状描述不得包含当前产品名称", rejected_build.stderr)
+            self.assertFalse(rejected_output.exists())
+
+            contaminated_workbook = temp / "product-in-symptoms.xlsx"
+            tampered = load_workbook(workbook_path)
+            tampered.worksheets[0]["E3"] = contaminated["records"][0]["symptomDescription"]
+            tampered.save(contaminated_workbook)
+            tampered.close()
+            rejected_report = temp / "product-in-symptoms-report.json"
+            rejected_verify = subprocess.run(
+                [NODE, str(VERIFIER), "--payload", str(contaminated_payload),
+                 "--workbook", str(contaminated_workbook), "--report", str(rejected_report)],
+                env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(rejected_verify.returncode, 0)
+            self.assertIn("症状描述不得包含当前产品名称", rejected_verify.stderr)
+            self.assertFalse(rejected_report.exists())
 
             invalid_cases = [
                 ("before-activation", "2026-04-09 09:00:00", None, "未晚于激活时间"),

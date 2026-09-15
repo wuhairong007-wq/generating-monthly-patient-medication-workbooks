@@ -1,4 +1,4 @@
 interface:
-  display_name: "生成月度患者医疗清单"
-  short_description: "依据月度患者清单生成用药方案、用药提醒和产品感知不良反应工作簿"
-  default_prompt: "使用 $generating-monthly-patient-medication-workbooks 生成月度患者用药清单，或按“生成不良反应清单 依据文件：/path/file.xlsx 产品：产品名称 服务周期：2026-08-01 至 2026-08-15”生成不良反应清单。"
+  display_name: "生成月度患者医疗清单与报告"
+  short_description: "依据患者服务数据生成用药提醒、用药方案、不良反应清单、洞察报告及患者调研访谈"
+  default_prompt: "使用 $generating-monthly-patient-medication-workbooks 生成月度患者清单、生成洞察报告或生成患者调研访谈（默认已授权AI模拟，无需人工确认）；不良反应使用“生成不良反应清单 依据文件：/path/file.xlsx 产品：产品名称 服务周期：2026-08-01 至 2026-08-15”。"

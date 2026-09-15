@@ -104,7 +104,7 @@ for (let index = 0; index < rows.length; index += 1) {
   assert(String(row[7] ?? "") === record.treatmentMeasures, `${record.userid}处理措施与payload不一致`);
   assert(String(row[8] ?? "") === record.treatmentOutcome, `${record.userid}转归与payload不一致`);
   assert(String(row[10] ?? "") === record.remark, `${record.userid}备注与payload不一致`);
-  assert(String(row[4] ?? "").includes(productName), `${record.userid}症状描述缺少产品名称`);
+  assert(!String(row[4] ?? "").includes(productName), `${record.userid}症状描述不得包含当前产品名称`);
   assert(String(row[6] ?? "").includes(productName), `${record.userid}关系分析缺少产品名称`);
   assert(!String(row[4] ?? "").includes("草案"), `${record.userid}症状描述包含草案标签`);
   assert(!String(row[10] ?? "").includes("草案"), `${record.userid}备注包含草案标签`);
@@ -132,6 +132,7 @@ const report = {
   servicePeriod: payload.meta.servicePeriod,
   productName,
   productAwareContent: true,
+  symptomDescriptionsExcludeProductName: true,
   noDraftPrefixes: true,
   tableObjects: sheet.tables.items.length,
   formulaErrors: "matched 0 entries",
