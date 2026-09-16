@@ -2,7 +2,7 @@
 
 ## 患者输入
 
-工作簿第一张表第 1 行为标题，第 2 行支持以下两种固定列契约，顺序必须一致。
+工作簿第一张表第 1 行为标题，第 2 行支持以下三种固定列契约，顺序必须一致。
 
 ### 标准 18 列月度患者源表
 
@@ -12,11 +12,15 @@
 
 `序号、患者唯一标识、姓名、性别、年龄、疾病、既往过敏史、联合用药、用药方案确认时间、用药方案、用药周期、方案链接、本月是否发生不良反应（AE）`
 
-13 列格式的 `inputFormat` 为 `medicationReminder13`。它没有激活日期，`用药方案确认时间` 是唯一的确认时间来源，必须非空且可解析；提取结果保留 `sourceConfirmationTime` 和 `confirmationTime`，并将 `activateTime` 置为空。不得读取或解析该表已有的 `联合用药`、`用药方案` 来补造临床药物事实。
+### 14 列用药提醒表（当前输出）
+
+`序号、患者唯一标识、姓名、性别、年龄、疾病、既往过敏史、手术名称、联合用药、用药方案确认时间、用药方案、用药周期、方案链接、本月是否发生不良反应（AE）`
+
+13 列格式的 `inputFormat` 为 `medicationReminder13`，14 列格式为 `medicationReminder14`。两者都没有激活日期，`用药方案确认时间` 是唯一的确认时间来源，必须非空且可解析；提取结果保留 `sourceConfirmationTime` 和 `confirmationTime`，并将 `activateTime` 置为空。不得读取或解析旧 `手术名称`、`联合用药`、`用药方案` 来补造临床事实，手术名称必须根据本次产品与患者疾病重新匹配生成。
 
 `患者唯一标识` 作为 userid。空值或重复值直接停止；不要修复、补齐、转号或去重。
 
-18 列格式的 `inputFormat` 为 `monthlyPatient18`。该格式按激活日期计算同月、且晚于激活时间的确认时间；13 列格式则直接复用源确认时间。两种格式都必须将确认时间限制在 06:00:00–21:59:59，并在最终工作簿中与 payload 保持一致。
+18 列格式的 `inputFormat` 为 `monthlyPatient18`。该格式按激活日期计算同月、且晚于激活时间的确认时间；13/14 列格式则直接复用源确认时间。三种格式都必须将确认时间限制在 06:00:00–21:59:59，并在最终工作簿中与 payload 保持一致。
 
 ## Product Profile
 
@@ -111,9 +115,27 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 器械 profile 的 `surgeryRules` 结构：
 
+器械疾病方案的 `minimumCombinedMedicationCount` 和 `minimumDiseaseMedicationCount` 默认均为3，必须满足 `3 <= minimumDiseaseMedicationCount <= minimumCombinedMedicationCount <= 5`。每位患者至少3种不同的疾病相关/围手术期药品；器械本身不可列入 `combinedMedication` 或计数。较低配置直接拒绝，`medicationCountRationale`、`allowProductOnly` 和模拟模式均不能绕过器械门槛。生成器、工作簿构建器和最终验证器使用同一患者级数量要求。
+
 ```json
 [{"when": {"diseaseContainsAny": ["疾病"]}, "surgeryName": "规范手术名称"}]
 ```
+
+`surgeryRules` 仅适用于当前 `productName`，优先依据器械说明书/监管适用范围及患者疾病建立，profile 的 `evidence` 记录真实来源。每条规则必须有非空 `diseaseEqualsAny` 或 `diseaseContainsAny` 和非空 `surgeryName`。无匹配或名称带不确定表述时，默认允许AI建立并使用下列情景补全规则；多匹配仍须整理为唯一规则。用药产品的 `surgeryName` 始终为空。
+
+```json
+{
+  "allowSimulation": true,
+  "simulatedSurgeryRules": [{
+    "when": {"diseaseEqualsAny": ["疾病名称"]},
+    "surgeryName": "规范手术名称",
+    "assumptions": ["AI为缺失的病变部位或具体情景所作假设"],
+    "rationale": "该术式与疾病的联系及当前证据缺口；不作为真实手术或获批用途证明"
+  }]
+}
+```
+
+`allowSimulation` 默认 `true`，无需人工确认；明确真实记录请求设为 `false`。AI负责在调用脚本前补齐疾病专属情景规则，脚本不内置某个产品的通用术式。每条匹配情景规则必须有规范名称、非空假设列表和理由；生成器将使用情况写入 `meta.surgerySimulationAudit`，每项含 userid、产品、疾病、术式、缺口原因、假设及理由，并自动设置 `meta.simulation: true`。显式整批模拟可在 profile 设置 `simulation: true`。此元数据不写入最终工作簿；也不授权伪造引用、器械获批范围或放宽药物安全校验。
 
 ## Payload
 
@@ -136,7 +158,7 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 用药 payload 的 `meta` 必须包含兼容默认值 `minimumCombinedMedicationCount: 3`、`minimumDiseaseMedicationCount: 2`、`minimumUniqueMedicationPlanCount`、`uniqueMedicationPlanCount` 和 `diseaseMedicationNamesByUserid`。生成器还必须写入 `minimumCombinedMedicationCountByUserid` 、`minimumDiseaseMedicationCountByUserid` 和 `medicationCountRationaleByUserid`，以记录每位患者所匹配方案的实际门槛和降低门槛依据。构建器和最终验证器必须使用这些患者级值；映射缺失时回退到 3/2 兼容默认。其中去重目标按 `ceil(患者数/100)` 计算，仅作为推荐优先级；去重依据为药品、规格、剂量、频次、时段和疗程的完整给药方案。`meta` 还应记录 `uniqueMedicationPlanPriority`、`uniqueMedicationPlanTargetMet` 和 `uniqueMedicationPlanShortfall`。构建器和最终验证器必须重算实际去重数并校验元数据一致性，但不得因未达成推荐目标而失败。`diseaseMedicationNamesByUserid` 逐 userid 记录从当前患者唯一 `diseasePlan.medicationGroups` 选出的药名；复溶液、稀释液等直接产品辅助品不计入该映射。药品产品必须位于 `combinedMedication` 首项，且必须满足当前患者方案的最低疾病治疗药数，不得用无关药品补足。
 
-每个 `diseasePlan` 可选声明 `minimumCombinedMedicationCount` 和 `minimumDiseaseMedicationCount`，二者必须满足 `minimumCombinedMedicationCount >= 1 + minimumDiseaseMedicationCount`。任一值低于默认值 3/2 时，必须提供非空 `medicationCountRationale`。
+用药产品的每个 `diseasePlan` 可选声明 `minimumCombinedMedicationCount` 和 `minimumDiseaseMedicationCount`，二者必须满足 `minimumCombinedMedicationCount >= 1 + minimumDiseaseMedicationCount`。任一值低于默认值 3/2 时，必须提供非空 `medicationCountRationale`。器械采用上述3/3规则，不加算器械本身。
 
 当安全筛选后某个匹配疾病方案的疾病治疗药为 0 种时，生成器默认自动检索候选药；设置 `AUTO_MEDICATION_SEARCH=0` 可关闭。检索器只抓取 `nmpa.gov.cn`、`nhc.gov.cn`、`gov.cn`、`cma.org.cn`、`csu.org.cn` 等白名单来源页，不把搜索摘要、营销页或论坛作为依据。每个自动候选必须提供完整 `specification`、`singleDose`、`route`、`frequency`、`medicationTime` 和正整数 `treatmentDays`；候选字段不完整时仅记录在 `searchAudit` 并停止。`meta.searchAudit` 至少记录疾病方案、查询、来源 URL/标题、状态、候选数和错误信息；检索不能读取 13 列输入中的旧联合用药或用药方案文本。
 
@@ -144,7 +166,9 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 ## 最终输出
 
-- `用药提醒_<产品名称>.xlsx`：每个 userid 一行。
+- 手术名称仅填规范术式，不附加“（模拟候选）”，也不填“待确认”“适用性待核实”等不确定名称；依据不足时按已记录假设的情景规则补全，不能简单删掉限定语冒充事实。构建器和最终验证器拒绝不确定手术名称。
+- 当 `meta.simulation: true` 时，两份最终文件名必须包含“模拟”，默认 `用药提醒_<产品名称>_模拟.xlsx`、`用药方案_<产品名称>_模拟.xlsx`；标题、表头、正文、单元格、工作表名、批注和备注不出现“模拟”字样。生成展示文案时直接写自然内容，不批量删除临床风险提示。构建器与最终验证器检查文件名和可见表格内容；内部 JSON 可保留模拟标记和假设。最终交付说明文件为AI生成情景数据。
+- `用药提醒_<产品名称>.xlsx`：每个 userid 一行，固定为上述 14 列。G 列“既往过敏史”后紧接 H 列“手术名称”，逐行取对应 `records[].surgeryName`；器械填候选术式，用药留空。原联合用药及后续字段顺延至 I:N，标题合并范围、表格对象、格式和预览均覆盖 A:N。最终验证器核对实际 H 列与 payload 一致，并验证后续字段没有错位。
 - `用药方案_<产品名称>.xlsx`：每个 userid 每个联合药一行。
 - 验证文件和预览只留在任务工作目录，不交付给用户，除非用户要求。
 
@@ -205,5 +229,5 @@ payload 的 `meta.productName` 保存用户提供的产品名称。每条记录�
 - 洞察报告：月度患者清单、患者随访、症状自评、用药提醒四类必填，加可选不良反应清单（常用五表），无需补充健康管理方案或逐药清单；保留原6/7表兼容，按表头识别角色；输出 `患者洞察报告_<产品>_<YYYY-MM>.docx`。参见 [insight-report-workflow.md](insight-report-workflow.md)、[insight-report-schema.md](insight-report-schema.md)。
 - 患者调研访谈：默认月度患者清单、患者随访、症状自评、用药提醒、不良反应清单五表；兼容旧版患者主表、健康管理方案、跟踪提醒、智能随访、症状自评、不良反应清单六表，不混合角色；没有不良反应证据时不能确定受访资格，必须补齐才能生成已完成访谈或情景访谈。默认已授权AI模拟访谈，无需人工确认，直接生成完整模拟问答，文件名含“模拟”；用户明确要求真实访谈或提纲时执行该模式。默认仅中度/高度/重度；是否轻度为是时允许轻度补足。电话随访输出1份记录明细，深度访谈输出分析与明细2份 Word。参见 [patient-interview-workflow.md](patient-interview-workflow.md)、[deep-interview-template-contract.md](deep-interview-template-contract.md)。
 - 患者主表兼容当前18列月度表的“患者唯一标识→userid”“所属地区→地区”字段映射，ID值不改写；洞察明细按专用表头识别，访谈角色保持其单独契约。
-- 当前13列“用药提醒”不等同于含体温监测次数、患者响应率的“跟踪提醒”；当前10列“用药方案”没有用药方案确认时间，不能代替任何需要带日期记录的角色；洞察月度模式直接读取13列用药提醒表，以明确药名和确认时间进行登记统计，不套用旧跟踪提醒或逐药清单字段。缺少必填角色或日期时补充对应原始资料，不推测或补造统计字段。
+- 13/14列“用药提醒”不等同于含体温监测次数、患者响应率的“跟踪提醒”；当前10列“用药方案”没有用药方案确认时间，不能代替任何需要带日期记录的角色；洞察月度模式按表头读取用药提醒表，以明确药名和确认时间进行登记统计，新增“手术名称”不改变其他字段含义，不套用旧跟踪提醒或逐药清单字段。缺少必填角色或日期时补充对应原始资料，不推测或补造统计字段。
 - 新报告和访谈默认输出至患者主表同级目录；路径不可写时用独立任务输出目录并说明实际路径。重名附时间戳，不覆盖输入、模板或既有结果。JSON、图表、格式规范、预览及核验记录留在工作目录。

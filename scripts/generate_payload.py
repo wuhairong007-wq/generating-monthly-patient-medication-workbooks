@@ -24,16 +24,24 @@ DOSAGE_FORM_SUFFIX = re.compile(
 )
 MIN_COMBINED_MEDICATION_COUNT = 3
 MIN_DISEASE_MEDICATION_COUNT = 2
+UNCERTAIN_SURGERY = re.compile(r"待确认|待核实|待核对|待明确|待定|未详|不详|未明确|不明确|未确定|不确定|未核实|尚未核实|适用性不明|需确认|需核实|需明确|可能|疑似|暂不确定|无法确定")
 
 
-def disease_plan_minimums(plan):
+def disease_plan_minimums(plan, product_type="用药"):
     plan_id = str(plan.get("id", "")).strip() or "未命名疾病方案"
     combined = plan.get("minimumCombinedMedicationCount", MIN_COMBINED_MEDICATION_COUNT)
-    disease = plan.get("minimumDiseaseMedicationCount", MIN_DISEASE_MEDICATION_COUNT)
+    device = product_type == "器械"
+    disease = plan.get("minimumDiseaseMedicationCount", 3 if device else MIN_DISEASE_MEDICATION_COUNT)
     if not isinstance(combined, int) or not 1 <= combined <= 5:
         raise ValueError(f"{plan_id}的minimumCombinedMedicationCount必须为1至5的整数")
-    if not isinstance(disease, int) or not 0 <= disease <= 4:
-        raise ValueError(f"{plan_id}的minimumDiseaseMedicationCount必须为0至4的整数")
+    if not isinstance(disease, int) or not 0 <= disease <= (5 if device else 4):
+        raise ValueError(f"{plan_id}的minimumDiseaseMedicationCount超出合法整数范围")
+    if device:
+        if combined < 3 or disease < 3:
+            raise ValueError(f"{plan_id}器械联合用药及疾病治疗药均至少3种，器械不计入药品数")
+        if combined < disease:
+            raise ValueError(f"{plan_id}器械总用药最低数量不能小于疾病治疗药数量")
+        return combined, disease
     if combined < 1 + disease:
         raise ValueError(f"{plan_id}的总用药最低数量不能小于当前产品加疾病治疗药数量")
     if combined < MIN_COMBINED_MEDICATION_COUNT or disease < MIN_DISEASE_MEDICATION_COUNT:
@@ -216,13 +224,64 @@ def prescription_entry(medication):
     )
 
 
-def choose_surgery(profile, patient):
+def clean_surgery_name(name):
+    """Keep simulation labels at file level, preserving clinical qualifiers."""
+    name = re.sub(r"[（(]\s*模拟候选\s*[）)]", "", name)
+    name = re.sub(r"([（(])\s*模拟候选\s*[；;、]\s*", r"\1", name)
+    return name.replace("模拟候选", "").strip()
+
+
+def resolve_surgery(profile, patient):
     if profile["productType"] == "用药":
-        return ""
+        return "", None
+    matched = []
+    context = f'{patient["userid"]}（产品：{profile["productName"]}；疾病：{patient["disease"]}）'
     for rule in profile.get("surgeryRules", []):
-        if matches(patient, rule.get("when", {})):
-            return str(rule.get("surgeryName", "")).strip()
-    raise ValueError(f'{patient["userid"]}没有匹配到规范手术方案')
+        conditions = rule.get("when", {})
+        if not (conditions.get("diseaseEqualsAny") or conditions.get("diseaseContainsAny")):
+            raise ValueError("器械手术规则必须包含明确的疾病条件")
+        name = rule.get("surgeryName")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("器械手术规则的surgeryName不能为空")
+        name = clean_surgery_name(name)
+        if not name:
+            raise ValueError("器械手术规则的surgeryName不能仅包含模拟标识")
+        if matches(patient, conditions):
+            matched.append(name.strip())
+    if len(matched) > 1:
+        raise ValueError(f'{context}匹配到多个手术方案，需明确唯一适用术式')
+    if matched and not UNCERTAIN_SURGERY.search(matched[0]):
+        return matched[0], None
+    reason = f'手术名称含不确定表述：{matched[0]}' if matched else '没有匹配到规范手术方案'
+    if profile.get("allowSimulation", True):
+        fallback = []
+        for rule in profile.get("simulatedSurgeryRules", []):
+            conditions = rule.get("when", {})
+            if not (conditions.get("diseaseEqualsAny") or conditions.get("diseaseContainsAny")):
+                raise ValueError("补全手术规则必须包含明确的疾病条件")
+            if matches(patient, conditions):
+                fallback.append(rule)
+        if len(fallback) > 1:
+            raise ValueError(f'{context}匹配到多个补全术式，需明确唯一规则')
+        if fallback:
+            rule = fallback[0]
+            name = rule.get("surgeryName")
+            if not isinstance(name, str) or not name.strip() or UNCERTAIN_SURGERY.search(name) or "模拟" in name:
+                raise ValueError(f'{context}补全手术名称必须为非空规范术式')
+            assumptions = rule.get("assumptions")
+            rationale = rule.get("rationale")
+            if not isinstance(assumptions, list) or not assumptions or not all(isinstance(x, str) and x.strip() for x in assumptions):
+                raise ValueError(f'{context}补全术式必须记录内部assumptions')
+            if not isinstance(rationale, str) or not rationale.strip():
+                raise ValueError(f'{context}补全术式必须记录内部rationale')
+            return name.strip(), {"userid": patient["userid"], "productName": profile["productName"],
+                                  "disease": patient["disease"], "surgeryName": name.strip(),
+                                  "reason": reason, "assumptions": assumptions, "rationale": rationale}
+    raise ValueError(f'{context}{reason}；需补充疾病专属AI情景规则，真实模式需补充依据')
+
+
+def choose_surgery(profile, patient):
+    return resolve_surgery(profile, patient)[0]
 
 
 def validate_profile(profile):
@@ -252,7 +311,7 @@ def validate_profile(profile):
             raise ValueError(f"{plan_id}疾病方案缺少权威依据")
         if not isinstance(plan.get("allowProductOnly"), bool):
             raise ValueError(f"{plan_id}必须显式设置allowProductOnly")
-        disease_plan_minimums(plan)
+        disease_plan_minimums(plan, profile.get("productType", "用药"))
         if not isinstance(plan.get("medicationGroups", []), list):
             raise ValueError(f"{plan_id}的medicationGroups必须为数组")
         for group in plan.get("medicationGroups", []):
@@ -374,7 +433,7 @@ def maybe_search_and_extend_profile(profile, patients, search_fn=None, audit_pat
             continue
         searched_plans.add(plan_id)
         selected_groups = safe_group_alternatives(disease_plan, patient)
-        _, minimum_disease = disease_plan_minimums(disease_plan)
+        _, minimum_disease = disease_plan_minimums(disease_plan, profile.get("productType", "用药"))
         if len(selected_groups) >= minimum_disease:
             audit.append({"planId": plan_id, "disease": patient["disease"], "status": "not_needed"})
             continue
@@ -456,6 +515,7 @@ def main():
     minimum_disease_by_userid = {}
     medication_count_rationale_by_userid = {}
     combination_counters = defaultdict(int)
+    surgery_simulation_audit = []
     for patient in patients:
         raw_medications = []
         if profile.get("baseMedication"):
@@ -463,7 +523,7 @@ def main():
         raw_medications.extend(profile.get("directProductAdjuncts", []))
 
         disease_plan = choose_disease_plan(profile, patient)
-        minimum_combined, minimum_disease = disease_plan_minimums(disease_plan)
+        minimum_combined, minimum_disease = disease_plan_minimums(disease_plan, profile["productType"])
         selected_groups = safe_group_alternatives(disease_plan, patient)
         combination_key = (
             disease_plan["id"],
@@ -478,7 +538,7 @@ def main():
         disease_medications = choose_medication_combination(
             selected_groups, combination_index % disease_combination_count
         )
-        if profile["productType"] == "用药" and len(disease_medications) < minimum_disease:
+        if len(disease_medications) < minimum_disease:
             raise ValueError(
                 f'{patient["userid"]}（疾病：{patient["disease"]}）匹配疾病方案{disease_plan["id"]}后'
                 f'仅生成疾病治疗药{len(disease_medications)}种，至少需要{minimum_disease}种；'
@@ -500,13 +560,17 @@ def main():
             raise ValueError(f'{patient["userid"]}联合用药出现重复药品')
         if len(names) > 5:
             raise ValueError(f'{patient["userid"]}联合用药超过5项，需人工复核')
-        if profile["productType"] == "用药" and len(names) < minimum_combined:
+        if profile["productType"] == "器械" and product_name in names:
+            raise ValueError(f'{patient["userid"]}器械产品不能计入联合用药药品数')
+        if len(names) < minimum_combined:
             raise ValueError(
                 f'{patient["userid"]}（疾病：{patient["disease"]}）匹配疾病方案{disease_plan["id"]}后'
                 f'联合用药{len(names)}种，至少需要{minimum_combined}种'
             )
 
-        surgery_name = choose_surgery(profile, patient)
+        surgery_name, surgery_audit = resolve_surgery(profile, patient)
+        if surgery_audit:
+            surgery_simulation_audit.append(surgery_audit)
         records.append({
             "userid": patient["userid"],
             "combinedMedication": names,
@@ -562,6 +626,8 @@ def main():
             "sourceTitle": extracted.get("title", ""),
             "productType": profile["productType"],
             "productName": product_name,
+            "simulation": bool(profile.get("simulation", False) or surgery_simulation_audit),
+            "surgerySimulationAudit": surgery_simulation_audit,
             "patientCount": len(patients),
             "inputFormat": extracted.get("inputFormat", "monthlyPatient18"),
             "searchEnabled": os.environ.get("AUTO_MEDICATION_SEARCH", "1") != "0",
@@ -580,7 +646,7 @@ def main():
             ),
             "evidence": profile["evidence"],
             "minimumCombinedMedicationCount": MIN_COMBINED_MEDICATION_COUNT,
-            "minimumDiseaseMedicationCount": MIN_DISEASE_MEDICATION_COUNT,
+            "minimumDiseaseMedicationCount": 3 if profile["productType"] == "器械" else MIN_DISEASE_MEDICATION_COUNT,
             "minimumCombinedMedicationCountByUserid": minimum_combined_by_userid,
             "minimumDiseaseMedicationCountByUserid": minimum_disease_by_userid,
             "medicationCountRationaleByUserid": medication_count_rationale_by_userid,

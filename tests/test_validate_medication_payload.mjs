@@ -148,11 +148,21 @@ assert.throws(
   /用药最低数量关系无效/,
 );
 
+for (const names of [["围手术期药A"], ["围手术期药A", "围手术期药B"]]) {
+  assert.throws(() => validateMedicationMinimums(payload({
+    productType: "器械", combinedMedication: names, diseaseMedicationNames: names,
+  })), /至少需要3/);
+}
 assert.doesNotThrow(() => validateMedicationMinimums(payload({
-  productType: "器械",
-  combinedMedication: ["围手术期药物"],
-  diseaseMedicationNames: [],
+  productType:"器械", combinedMedication:["药A","药B","药C"], diseaseMedicationNames:["药A","药B","药C"],
 })));
+assert.throws(() => validateMedicationMinimums(payload({
+  productType:"器械", combinedMedication:["当前产品","药A","药B"], diseaseMedicationNames:["药A","药B"],
+})), /器械.*不能计入/);
+assert.throws(() => validateMedicationMinimums(payload({
+  productType:"器械", combinedMedication:["药A","药B","药C"], diseaseMedicationNames:["药A","药B","药C"],
+  minimumsByUserid:{combined:1,disease:1,rationale:"测试降级"},
+})), /器械.*至少3/);
 
 const exactPayload = medicationPlanPayload();
 assert.doesNotThrow(() => validateMedicationPlanFields(exactPayload));

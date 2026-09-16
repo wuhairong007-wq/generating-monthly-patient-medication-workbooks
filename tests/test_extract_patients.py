@@ -75,6 +75,20 @@ class ExtractPatientsTest(unittest.TestCase):
         self.assertIsNone(payload)
         self.assertIn("用药方案确认时间无效", result.stderr)
 
+    def test_reads_surgery_column_without_shifting_fields_or_reusing_old_surgery(self):
+        headers = REMINDER_HEADERS[:7] + ["手术名称"] + REMINDER_HEADERS[7:]
+        row = [1, "u-device", "测试患者", "女", 42, "腹腔粘连", "青霉素过敏",
+               "旧产品的手术，不能沿用", "旧药", "2026-08-26 16:16:07", "旧方案", "7天", "", "是"]
+        result, payload = self.run_extractor(headers, [row])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["inputFormat"], "medicationReminder14")
+        patient = payload["patients"][0]
+        self.assertEqual(patient["allergyHistory"], "青霉素过敏")
+        self.assertEqual(patient["adverseEvent"], "是")
+        self.assertEqual(patient["sourceConfirmationTime"], "2026-08-26 16:16:07")
+        self.assertEqual(patient["activateTime"], "")
+        self.assertNotIn("surgeryName", patient)
+
     def test_keeps_existing_eighteen_column_contract(self):
         headers = [
             "序号", "患者唯一标识", "姓名", "激活日期", "性别", "年龄", "联系电话", "所属地区",
