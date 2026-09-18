@@ -20,7 +20,13 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.18.2"', frontmatter)
+        self.assertIn('version: "1.18.3"', frontmatter)
+
+    def test_documents_normal_patient_tag_compatibility(self):
+        for document in [self.skill, self.contract]:
+            self.assertIn("患者标签", document)
+            self.assertIn("正常", document)
+            self.assertIn("兼容旧值", document)
 
     def test_adverse_reactions_require_service_period_and_follow_activation(self):
         for document in [self.skill, self.contract, self.rules]:

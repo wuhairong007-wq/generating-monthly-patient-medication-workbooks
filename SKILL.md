@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks, or asks 生成洞察报告、生成患者调研访谈、生成深度访谈 from service Excel files to create Word reports. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.18.2"
+  version: "1.18.3"
 ---
 
 # 生成月度患者用药清单
@@ -78,7 +78,7 @@ metadata:
    python scripts/extract_patients.py --source INPUT.xlsx --output patients.json
    ```
 
-   提取结果的 `inputFormat` 为 `monthlyPatient18`、`medicationReminder13` 或 `medicationReminder14`。13/14 列提醒表必须有合法的 `用药方案确认时间`；提取器将其保留为 `sourceConfirmationTime`，生成器会原样复用该确认时间，验证器不要求不存在的 `activateTime`。
+   提取结果的 `inputFormat` 为 `monthlyPatient18`、`medicationReminder13` 或 `medicationReminder14`。18 列源表的患者标签统一使用“正常”表示无风险标签，兼容旧值“无”和当前值“正常”：旧值“无”在提取后规范化为“正常”，其他标签保持原值。13/14 列提醒表必须有合法的 `用药方案确认时间`；提取器将其保留为 `sourceConfirmationTime`，生成器会原样复用该确认时间，验证器不要求不存在的 `activateTime`。
 
 2. 查看 `patients.json` 的疾病、年龄、性别、过敏史和 AE 分布。按 `ceil(患者数/100)` 计算用药方案建议去重目标，即每增加 100 条记录增加 1 组，用于优先丰富方案多样性但不作为生成阻断条件。核对当前产品的药品说明书/监管信息及每个疾病直接相关的指南，建立 `schemaVersion: 2` 的 `product-profile.json`。不要从示例产品复制药物；每个疾病治疗候选药必须声明 `role: diseaseTreatment`、疾病关联理由和药品依据。
 3. profile 中把当前药品设为 `baseMedication`；仅把复溶液等与产品直接绑定的辅助品放入 `directProductAdjuncts`。按输入中的疾病分别建立 `diseasePlans`，每个方案都要有疾病条件、独立依据、`allowProductOnly` 和 `medicationGroups`。疾病方案未设置数量字段时，默认至少 3 种联合用药和至少 2 种疾病治疗药；只有产品说明书或直接相关指南支持时，才可为单药或双药方案设置 `minimumCombinedMedicationCount` 、`minimumDiseaseMedicationCount` 和非空 `medicationCountRationale`。念珠菌性阴道炎、复发性阴道念珠菌病、混合性阴道感染和二重感染等可能适用克霉唑阴道片单药或双药方案的疾病，必须由本次 profile 的证据明确配置，不能依据疾病名称自动放宽。每位患者必须且只能匹配一个 `diseasePlan`，并从该方案中选出该方案宣告的最少疾病治疗药；直接产品辅助品不计入疾病治疗药数量。优先为每个药组配置多个同疾病、同治疗角色且有依据的安全候选；同一药品的已核实规格、剂量、频次、时段或疗程变体使用 `regimenVariants` 配置，并逐变体提供药品依据，生成器按输入顺序对安全候选组合和变体做确定性轮换。

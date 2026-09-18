@@ -28,6 +28,11 @@ def as_text(value):
     return str(value).strip()
 
 
+def normalize_patient_tag(value):
+    tag = as_text(value)
+    return "正常" if tag == "无" else tag
+
+
 def as_datetime(value, userid, label="激活日期"):
     if isinstance(value, datetime):
         return value
@@ -113,7 +118,7 @@ def main():
             "allergyHistory": as_text(row["既往过敏史"]) or "无",
             "adverseEvent": as_text(row["本月是否发生不良反应（AE）"]) or "否",
             "adverseEventGrade": as_text(row.get("AE严重程度分级")),
-            "patientTags": as_text(row.get("患者标签")),
+            "patientTags": normalize_patient_tag(row.get("患者标签")),
         }
         if input_format in {"medicationReminder13", "medicationReminder14"}:
             patient["sourceConfirmationTime"] = confirmation_time

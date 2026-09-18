@@ -104,6 +104,25 @@ class ExtractPatientsTest(unittest.TestCase):
         self.assertEqual(payload["patients"][0]["activateTime"], "2026-08-26 15:16:07")
         self.assertNotIn("sourceConfirmationTime", payload["patients"][0])
 
+    def test_normalizes_legacy_and_current_normal_patient_tags(self):
+        headers = [
+            "序号", "患者唯一标识", "姓名", "激活日期", "性别", "年龄", "联系电话", "所属地区",
+            "疾病", "既往过敏史", "AI用药提醒次数", "AI随访次数", "症状自评完成次数",
+            "患教内容阅读次数", "AI服务使用概况", "本月是否发生不良反应（AE）", "AE严重程度分级", "患者标签",
+        ]
+        rows = [
+            [1, "legacy", "旧值患者", "2026-08-26 15:16:07", "女", 42, "", "", "脑梗死", "无", 0, 0, 0, 0, "", "否", "", "无"],
+            [2, "current", "新值患者", "2026-08-26 15:16:07", "男", 51, "", "", "冠心病", "无", 0, 0, 0, 0, "", "否", "", "正常"],
+        ]
+
+        result, payload = self.run_extractor(headers, rows)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [patient["patientTags"] for patient in payload["patients"]],
+            ["正常", "正常"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
