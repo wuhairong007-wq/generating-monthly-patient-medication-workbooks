@@ -46,4 +46,9 @@ assert.throws(() => validateReminderConfirmation({
   reminderValue: "2026-08-26 16:16:08",
   inputFormat: "medicationReminder14",
 }), /未复用源用药方案确认时间/);
+assert.doesNotThrow(() => validateReminderConfirmation({
+  patient: reminderPatient,
+  reminderValue: "2026-08-26 16:16:07",
+  inputFormat: "medicationReminder15",
+}));
 console.log("validate_confirmation_time tests passed");

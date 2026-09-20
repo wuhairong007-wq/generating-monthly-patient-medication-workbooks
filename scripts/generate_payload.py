@@ -24,6 +24,7 @@ DOSAGE_FORM_SUFFIX = re.compile(
 )
 MIN_COMBINED_MEDICATION_COUNT = 3
 MIN_DISEASE_MEDICATION_COUNT = 2
+SPECIAL_DEVICE_COMPANY = "商联医药(河南)有限公司（器械）"
 UNCERTAIN_SURGERY = re.compile(r"待确认|待核实|待核对|待明确|待定|未详|不详|未明确|不明确|未确定|不确定|未核实|尚未核实|适用性不明|需确认|需核实|需明确|可能|疑似|暂不确定|无法确定")
 
 
@@ -287,6 +288,8 @@ def choose_surgery(profile, patient):
 def validate_profile(profile):
     if profile.get("schemaVersion") != 2:
         raise ValueError("product profile schemaVersion必须为2")
+    if not str(profile.get("companyName", "")).strip():
+        raise ValueError("公司名称为空")
     if "baseCompanions" in profile or "conditionalGroups" in profile:
         raise ValueError("schema v2不得使用baseCompanions或顶层conditionalGroups")
 
@@ -500,6 +503,8 @@ def main():
     product_name = str(profile.get("productName", "")).strip()
     if not product_name:
         raise ValueError("产品名称为空")
+    company_name = str(profile.get("companyName", "")).strip()
+    special_device_company = company_name == SPECIAL_DEVICE_COMPANY and profile["productType"] == "器械"
     if not profile.get("evidence"):
         raise ValueError("product profile必须记录至少一条权威依据")
     if profile["productType"] == "用药" and profile.get("baseMedication", {}).get("drugName") != product_name:
@@ -571,10 +576,13 @@ def main():
         surgery_name, surgery_audit = resolve_surgery(profile, patient)
         if surgery_audit:
             surgery_simulation_audit.append(surgery_audit)
+        prescription_list = " + ".join(prescription_entry(item) for item in medications)
+        if special_device_company and product_name in prescription_list:
+            raise ValueError(f'{patient["userid"]}处方清单不能包含当前产品名称：{product_name}')
         records.append({
             "userid": patient["userid"],
             "combinedMedication": names,
-            "prescriptionList": " + ".join(prescription_entry(item) for item in medications),
+            "prescriptionList": prescription_list,
             "surgeryName": surgery_name,
         })
         minimum_combined_by_userid[patient["userid"]] = minimum_combined
@@ -624,8 +632,10 @@ def main():
         "meta": {
             "source": extracted["source"],
             "sourceTitle": extracted.get("title", ""),
+            "companyName": company_name,
             "productType": profile["productType"],
             "productName": product_name,
+            "consumableName": product_name if special_device_company else "",
             "simulation": bool(profile.get("simulation", False) or surgery_simulation_audit),
             "surgerySimulationAudit": surgery_simulation_audit,
             "patientCount": len(patients),

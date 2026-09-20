@@ -89,6 +89,19 @@ class ExtractPatientsTest(unittest.TestCase):
         self.assertEqual(patient["activateTime"], "")
         self.assertNotIn("surgeryName", patient)
 
+    def test_accepts_fifteen_column_reminder_with_consumable_name(self):
+        headers = REMINDER_HEADERS[:7] + ["手术名称", "耗材名称"] + REMINDER_HEADERS[7:]
+        row = [1, "u-device", "测试患者", "女", 42, "腹腔粘连", "无",
+               "腹腔粘连松解术", "测试耗材", "药A、药B、药C", "2026-08-26 16:16:07",
+               "旧方案", "7天", "", "否"]
+
+        result, payload = self.run_extractor(headers, [row])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["inputFormat"], "medicationReminder15")
+        self.assertEqual(payload["patients"][0]["sourceConfirmationTime"], "2026-08-26 16:16:07")
+        self.assertNotIn("consumableName", payload["patients"][0])
+
     def test_keeps_existing_eighteen_column_contract(self):
         headers = [
             "序号", "患者唯一标识", "姓名", "激活日期", "性别", "年龄", "联系电话", "所属地区",

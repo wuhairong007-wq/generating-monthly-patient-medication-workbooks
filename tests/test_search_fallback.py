@@ -27,6 +27,7 @@ def patient(userid="u1", disease="功能性便秘"):
 def profile():
     return {
         "schemaVersion": 2,
+        "companyName": "测试公司",
         "productType": "用药",
         "productName": "测试产品",
         "evidence": [{"title": "产品说明书", "url": "https://example.test/label", "scope": "产品用法"}],

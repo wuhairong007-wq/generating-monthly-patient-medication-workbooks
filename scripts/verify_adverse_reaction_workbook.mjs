@@ -53,6 +53,62 @@ function isWithinDailyOccurrenceWindow(value) {
   return total >= 7 * 3600 + 30 * 60 && total <= 21 * 3600 + 59 * 60 + 59;
 }
 
+function beijingParts(value) {
+  const shifted = new Date(value.getTime() + 8 * 3600000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    totalSeconds: shifted.getUTCHours() * 3600 + shifted.getUTCMinutes() * 60 + shifted.getUTCSeconds(),
+  };
+}
+
+function beijingDateTime(year, month, day, hour, minute, second) {
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, second) - 8 * 3600000);
+}
+
+function beijingDateKey(value) {
+  const parts = beijingParts(value);
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function expectedOccurrenceWindow(activation) {
+  const parts = beijingParts(activation);
+  const morningActivation = parts.totalSeconds < 12 * 3600;
+  const shiftedTarget = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + (morningActivation ? 1 : 2)));
+  const year = shiftedTarget.getUTCFullYear();
+  const month = shiftedTarget.getUTCMonth() + 1;
+  const day = shiftedTarget.getUTCDate();
+  if (morningActivation) {
+    return {
+      start: beijingDateTime(year, month, day, 12, 0, 0),
+      end: beijingDateTime(year, month, day, 21, 59, 59),
+      label: "目标下午时段12:00:00至21:59:59",
+    };
+  }
+  return {
+    start: beijingDateTime(year, month, day, 7, 30, 0),
+    end: beijingDateTime(year, month, day, 11, 59, 59),
+    label: "目标上午时段07:30:00至11:59:59",
+  };
+}
+
+function validateOccurrenceTime(userid, occurrence, activation, servicePeriod) {
+  assert(occurrence > activation, `${userid}发生时间未晚于激活时间`);
+  assert(occurrence >= servicePeriod.start && occurrence <= servicePeriod.end, `${userid}发生时间不在服务周期内`);
+  const expected = expectedOccurrenceWindow(activation);
+  assert(
+    expected.start >= servicePeriod.start && expected.end <= servicePeriod.end,
+    `${userid}激活时间对应的目标时段超出服务周期`,
+  );
+  assert(
+    beijingDateKey(occurrence) === beijingDateKey(expected.start),
+    `${userid}发生时间不在激活时间对应的目标日期${beijingDateKey(expected.start)}`,
+  );
+  assert(occurrence >= expected.start && occurrence <= expected.end, `${userid}发生时间不在${expected.label}`);
+  assert(isWithinDailyOccurrenceWindow(occurrence), `${userid}发生时间不在每日07:30至21:59:59窗口内`);
+}
+
 const args = parseArgs(process.argv.slice(2));
 for (const key of ["payload", "workbook", "report"]) {
   if (!args[key]) throw new Error(`缺少--${key}`);
@@ -94,11 +150,10 @@ for (let index = 0; index < rows.length; index += 1) {
     `${record.userid}严重程度与人工干预映射错误`,
   );
   assert(patient, `${record.userid}缺少源患者`);
-  const occurrence = parseDateTime(row[3]);
-  assert(occurrence > parseDateTime(patient.activateTime, `${record.userid}激活时间`), `${record.userid}发生时间未晚于激活时间`);
-  assert(occurrence >= servicePeriod.start && occurrence <= servicePeriod.end, `${record.userid}发生时间不在服务周期内`);
-  assert(isWithinDailyOccurrenceWindow(occurrence), `${record.userid}发生时间不在每日07:30至21:59:59窗口内`);
   assert(String(row[3] ?? "") === record.occurrenceTime, `${record.userid}发生时间与payload不一致`);
+  const occurrence = parseDateTime(row[3]);
+  const activation = parseDateTime(patient.activateTime, `${record.userid}激活时间`);
+  validateOccurrenceTime(record.userid, occurrence, activation, servicePeriod);
   assert(String(row[4] ?? "") === record.symptomDescription, `${record.userid}症状描述与payload不一致`);
   assert(String(row[6] ?? "") === record.medicationRelationship, `${record.userid}关系分析与payload不一致`);
   assert(String(row[7] ?? "") === record.treatmentMeasures, `${record.userid}处理措施与payload不一致`);
@@ -129,6 +184,7 @@ const report = {
   occurrenceTimesFollowActivation: true,
   occurrenceTimesWithinServicePeriod: true,
   occurrenceTimesWithinDailyWindow: true,
+  occurrenceTimesMatchActivationPeriodRule: true,
   servicePeriod: payload.meta.servicePeriod,
   productName,
   productAwareContent: true,

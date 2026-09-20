@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks, or asks 生成洞察报告、生成患者调研访谈、生成深度访谈 from service Excel files to create Word reports. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.18.3"
+  version: "1.20.0"
 ---
 
 # 生成月度患者用药清单
@@ -21,7 +21,7 @@ metadata:
 - 深度访谈使用对应患者姓名替代 P01、P02 等编号：两份报告的概况表表头改为“姓名”，逐人标题、正文及引语署名统一取主表姓名；完整患者ID继续保留用于核验。姓名映射与缺失处理见访谈流程。
 
 - 文案包含 `生成不良反应清单 依据文件：... 产品：... 服务周期：YYYY-MM-DD 至 YYYY-MM-DD` 时，执行下方“不良反应清单流程”；`产品` 和 `服务周期` 必填，不要求 `产品类型`。
-- 文案包含 `生成月度患者清单` 且提供产品类型和产品名称时，执行原有用药/器械流程。
+- 文案包含 `生成月度患者清单` 且提供公司、产品类型和产品名称时，执行原有用药/器械流程。
 
 ## 不良反应清单流程
 
@@ -38,7 +38,7 @@ metadata:
      --output adverse-reactions.json
    ```
 
-   脚本只筛选患者标签严格等于“轻度患者”“中度患者”或“重度患者”的记录；其他标签不输出。发生时间必须严格晚于激活时间，且位于服务周期内每天 `07:30:00` 至 `21:59:59`（北京时间，含两端）。通过 userid 哈希在每位患者的可用秒级区间内确定性选择时间；缺少有效激活时间，或激活后在服务周期内没有可用时间时停止生成，报告 userid、激活时间和服务周期，不得跳过目标患者或修改激活时间。发现途径只能为“AI用药随访发现”或“患者自评反馈”。症状描述需写明患者疾病、实际年龄和年龄段，并由 userid 稳定选择主要症状、伴随表现和发生模式，避免同类患者使用单一固定模板。
+   脚本只筛选患者标签严格等于“轻度患者”“中度患者”或“重度患者”的记录；其他标签不输出。发生时间必须严格晚于激活时间，并按激活时段固定生成：激活时间早于 `12:00:00` 时为激活日期加1天的下午 `12:00:00` 至 `21:59:59`；激活时间等于或晚于 `12:00:00` 时为激活日期加2天的上午 `07:30:00` 至 `11:59:59`（北京时间，含两端）。通过 userid 哈希在对应半日窗口的整秒闭区间内确定性选择具体时间；目标日期或完整窗口超出服务周期时停止生成，报告 userid、激活时间、目标日期/时段和服务周期，不得截断、顺延或跳过目标患者。发现途径只能为“AI用药随访发现”或“患者自评反馈”。症状描述需写明患者疾病、实际年龄和年龄段，并由 userid 稳定选择主要症状、伴随表现和发生模式，避免同类患者使用单一固定模板。
 4. 使用 [assets/adverse-reaction-template.xlsx](assets/adverse-reaction-template.xlsx) 构建工作簿：
 
    ```bash
@@ -49,7 +49,7 @@ metadata:
      --preview-dir OUTPUT_DIR/previews
    ```
 
-5. 运行 `scripts/verify_adverse_reaction_workbook.mjs --payload adverse-reactions.json --workbook OUTPUT_DIR/不良反应清单.xlsx --report OUTPUT_DIR/verification.json`，独立检查发生时间晚于激活时间、处于 `meta.servicePeriod` 内且与 payload 一致，并检查首段、中段和末段预览。只有校验通过后才交付工作簿。
+   5. 运行 `scripts/verify_adverse_reaction_workbook.mjs --payload adverse-reactions.json --workbook OUTPUT_DIR/不良反应清单.xlsx --report OUTPUT_DIR/verification.json`，独立检查发生时间晚于激活时间、符合固定日期/半日规则（报告字段 `occurrenceTimesMatchActivationPeriodRule`）、处于 `meta.servicePeriod` 内且与 payload 一致，并检查首段、中段和末段预览。只有校验通过后才交付工作簿。
 6. 默认将结果写入输入文件同级目录；若用户指定输出路径，使用指定路径；目标已存在时附加时间戳，不覆盖。
 
 不良反应内容必须结合患者疾病、年龄、性别、过敏史、患者标签和用户提供的产品名称。症状描述不得包含当前产品信息（包括产品名称、商品名、规格等），仅描述患者疾病、年龄、症状及发生模式；关系分析必须包含当前产品名称，只能写可能的时间关联并保留其他解释。不得把推测写成已确认发生，不得虚构剂量、检查结果、好转/痊愈或确定性因果关系。逐行字段不得添加“结构化草案：”“人工审核草案：”等固定前缀。`severityGrade` 仅为严重程度建议，最终等级由系统规则确定。目标患者不少于20人时必须统计症状描述重复率；若同一疾病和年龄段被单个固定描述主导，应先扩充分层组合再生成工作簿。
@@ -62,11 +62,11 @@ metadata:
 
 不良反应流程需要患者标签和有效激活时间；13列用药提醒表缺少这些字段时，要求补充18列源表，不得用用药方案确认时间替代激活时间。
 
-原有用药/器械流程继续提取 `依据文件`、`产品类型` 和 `产品名称`。
+原有用药/器械流程提取 `依据文件`、`公司`、`产品类型` 和 `产品名称`；`公司` 必填，并写入 product profile 的 `companyName` 和 payload 的 `meta.companyName`。
 
-输入文件可为标准 18 列月度患者源表，也可为旧版 13 列或新版 14 列“用药提醒”表。新版在“既往过敏史”后增加“手术名称”。识别为提醒表时，沿用已有的 `用药方案确认时间`，不把它改名为激活时间，也不从旧 `手术名称`、`联合用药` 或 `用药方案` 文本反推临床事实；缺少的激活日期、联系方式等字段保持为空。
+输入文件可为标准 18 列月度患者源表，也可为旧版 13/14 列或当前 15 列“用药提醒”表。15 列格式在“手术名称”后增加“耗材名称”。识别为提醒表时，沿用已有的 `用药方案确认时间`，不把它改名为激活时间，也不从旧 `手术名称`、`耗材名称`、`联合用药` 或 `用药方案` 文本反推临床事实；缺少的激活日期、联系方式等字段保持为空。
 
-典型触发：`生成月度患者清单 依据文件：/path/月度患者清单.xlsx 产品类型：用药 产品名称：血栓通胶囊`。
+典型触发：`生成月度患者清单 依据文件：/path/月度患者清单.xlsx 公司：某医药公司 产品类型：用药 产品名称：血栓通胶囊`。
 
 输入、输出及 profile 契约见 [references/input-output-contract.md](references/input-output-contract.md)。临床生成边界见 [references/clinical-generation-rules.md](references/clinical-generation-rules.md)，每次生成前必须阅读全文。
 
@@ -78,9 +78,9 @@ metadata:
    python scripts/extract_patients.py --source INPUT.xlsx --output patients.json
    ```
 
-   提取结果的 `inputFormat` 为 `monthlyPatient18`、`medicationReminder13` 或 `medicationReminder14`。18 列源表的患者标签统一使用“正常”表示无风险标签，兼容旧值“无”和当前值“正常”：旧值“无”在提取后规范化为“正常”，其他标签保持原值。13/14 列提醒表必须有合法的 `用药方案确认时间`；提取器将其保留为 `sourceConfirmationTime`，生成器会原样复用该确认时间，验证器不要求不存在的 `activateTime`。
+   提取结果的 `inputFormat` 为 `monthlyPatient18`、`medicationReminder13`、`medicationReminder14` 或 `medicationReminder15`。18 列源表的患者标签统一使用“正常”表示无风险标签，兼容旧值“无”和当前值“正常”：旧值“无”在提取后规范化为“正常”，其他标签保持原值。13/14/15 列提醒表必须有合法的 `用药方案确认时间`；提取器将其保留为 `sourceConfirmationTime`，生成器会原样复用该确认时间，验证器不要求不存在的 `activateTime`。
 
-2. 查看 `patients.json` 的疾病、年龄、性别、过敏史和 AE 分布。按 `ceil(患者数/100)` 计算用药方案建议去重目标，即每增加 100 条记录增加 1 组，用于优先丰富方案多样性但不作为生成阻断条件。核对当前产品的药品说明书/监管信息及每个疾病直接相关的指南，建立 `schemaVersion: 2` 的 `product-profile.json`。不要从示例产品复制药物；每个疾病治疗候选药必须声明 `role: diseaseTreatment`、疾病关联理由和药品依据。
+2. 查看 `patients.json` 的疾病、年龄、性别、过敏史和 AE 分布。按 `ceil(患者数/100)` 计算用药方案建议去重目标，即每增加 100 条记录增加 1 组，用于优先丰富方案多样性但不作为生成阻断条件。核对当前产品的药品说明书/监管信息及每个疾病直接相关的指南，建立 `schemaVersion: 2` 的 `product-profile.json`；其中 `companyName` 必须精确保存用户“公司：”参数。不要从示例产品复制药物；每个疾病治疗候选药必须声明 `role: diseaseTreatment`、疾病关联理由和药品依据。
 3. profile 中把当前药品设为 `baseMedication`；仅把复溶液等与产品直接绑定的辅助品放入 `directProductAdjuncts`。按输入中的疾病分别建立 `diseasePlans`，每个方案都要有疾病条件、独立依据、`allowProductOnly` 和 `medicationGroups`。疾病方案未设置数量字段时，默认至少 3 种联合用药和至少 2 种疾病治疗药；只有产品说明书或直接相关指南支持时，才可为单药或双药方案设置 `minimumCombinedMedicationCount` 、`minimumDiseaseMedicationCount` 和非空 `medicationCountRationale`。念珠菌性阴道炎、复发性阴道念珠菌病、混合性阴道感染和二重感染等可能适用克霉唑阴道片单药或双药方案的疾病，必须由本次 profile 的证据明确配置，不能依据疾病名称自动放宽。每位患者必须且只能匹配一个 `diseasePlan`，并从该方案中选出该方案宣告的最少疾病治疗药；直接产品辅助品不计入疾病治疗药数量。优先为每个药组配置多个同疾病、同治疗角色且有依据的安全候选；同一药品的已核实规格、剂量、频次、时段或疗程变体使用 `regimenVariants` 配置，并逐变体提供药品依据，生成器按输入顺序对安全候选组合和变体做确定性轮换。
    当前产品、直接产品辅助品、疾病治疗候选药和自动检索补充药都必须通过患者级过敏筛选：既检查 profile 的 `avoidIfAllergyContains`，也检查药名（去除常见剂型后）是否直接命中过敏史；复杂交叉过敏关系必须由 profile 明确配置。最终输出前再次校验全部待输出药物，任一药物与既往过敏史冲突即停止生成，并提示 userid、过敏史、冲突药名和人工审核/安全替代方案要求，不得仅在注意事项中标记后继续输出。
    如果某个已匹配疾病方案在过敏/禁忌筛选后低于该方案声明的最低疾病治疗药数，默认自动联网检索高可信来源并尝试补充候选；可通过环境变量 `AUTO_MEDICATION_SEARCH=0` 关闭。检索只接受白名单官方/指南来源，不把搜索摘要当作药品依据；候选必须带完整规格、剂量、途径、频次、时间和疗程字段；候选字段不完整、无来源或仍不足该方案门槛时保持停止。检索过程写入 payload `meta.searchAudit`，不改写输入文件。
@@ -102,13 +102,14 @@ metadata:
      --output-dir OUTPUT_DIR
    ```
 
-7. 对脚本返回的两个工作簿运行 `scripts/verify_workbooks.mjs`。“用药提醒”统一输出 14 列，G 列为“既往过敏史”、H 列为“手术名称”、I 列为“联合用药”；H 列逐行写入对应 userid 的 `records[].surgeryName`，用药产品留空，器械产品按本次产品与患者疾病匹配生成。验证实际工作簿的列位置和术式值，不能只检查 payload。检查首段、中段、末段预览；任何 userid、术式、药物映射、频次、时间、疗程或公式错误都必须修复后重跑。
+7. 对脚本返回的两个工作簿运行 `scripts/verify_workbooks.mjs`。“用药提醒”统一输出 15 列，G 列为“既往过敏史”、H 列为“手术名称”、I 列为“耗材名称”、J 列为“联合用药”；H 列逐行写入对应 userid 的 `records[].surgeryName`。仅当 `companyName` 精确等于“商联医药(河南)有限公司（器械）”且产品类型为器械时，I 列逐行填写当前产品名称；其他场景留空。验证实际工作簿的列位置、术式值和耗材值，不能只检查 payload。检查首段、中段、末段预览；任何 userid、术式、耗材、药物映射、频次、时间、疗程或公式错误都必须修复后重跑。
 8. 仅在全部校验通过后，把两个最终 `.xlsx` 复制到用户期望的目录。默认输出到输入文件同级目录，文件名分别为 `用药提醒_<产品名称>.xlsx` 和 `用药方案_<产品名称>.xlsx`；发生任何情景补全或本次显式采用AI模拟时，两份文件名都加 `_模拟`。最终文件标题、正文、单元格、工作表名、批注及备注中不写“模拟”字样；AI模拟标记及假设仅留在内部 JSON 和文件名。临床注意事项正常保留，源确认时间不得表述为新方案批准时间。若已存在则附加时间戳，不覆盖。
 
 ## 不可放宽的规则
 
 - 器械流程每位患者的“联合用药”必须为3～5种不同药品，均来自对应疾病/围手术期方案；器械产品本身不计入药品数。器械 `minimumCombinedMedicationCount` 与 `minimumDiseaseMedicationCount` 默认均为3，不允许配置为1或2，也不因AI模拟或 `allowProductOnly` 绕过。安全候选不足时补充有直接依据的候选并重新筛选，仍不足则报告原因；不得为凑数加入无关药。生成器、构建器和最终验证器均执行该数量校验。
 - “手术名称”只输出规范术式，不包含“模拟候选”“待确认”“部位未详”“适用性待核实”“可能”等不确定文案。依据不足时自动进入已授权的AI情景补全：按疾病生成完整术式、记录内部假设，覆盖全部患者，不以空值或漏行绕过。最终文件内容不出现“模拟”，两份文件名必须带“模拟”；内部 `meta.simulation` 和逐患者 `surgerySimulationAudit` 保留生成来源。该授权不放宽过敏、药物禁忌、剂量、用药数量等安全校验。
+- 当 `companyName=商联医药(河南)有限公司（器械）` 且 `产品类型=器械` 时，`meta.consumableName` 和用药提醒“耗材名称”固定为当前产品名称，处方清单不能包含当前产品名称；生成器、构建器和最终验证器均执行该规则。其他公司或用药产品的“耗材名称”留空。
 - 必须覆盖全部输入 userid，且不得新增、遗漏、改写或重排 userid。
 - 每条生成记录只有 `userid`、`combinedMedication`、`prescriptionList`、`surgeryName` 四个键。
 - 用药产品的 `combinedMedication` 必须达到当前患者唯一匹配 `diseasePlan` 声明的最低总用药数，首项必须是产品名称，并满足该方案声明的最低疾病治疗药数；方案未设置数量字段时回退3/2默认值。`surgeryName` 必须是空字符串。

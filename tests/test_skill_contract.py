@@ -20,7 +20,15 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.18.3"', frontmatter)
+        self.assertIn('version: "1.20.0"', frontmatter)
+
+    def test_documents_special_company_consumable_rules(self):
+        for document in [self.skill, self.contract, self.clinical_rules]:
+            self.assertIn("公司：", document)
+            self.assertIn("companyName", document)
+            self.assertIn("商联医药(河南)有限公司（器械）", document)
+            self.assertIn("耗材名称", document)
+            self.assertIn("处方清单不能包含当前产品名称", document)
 
     def test_documents_normal_patient_tag_compatibility(self):
         for document in [self.skill, self.contract]:
@@ -35,7 +43,12 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn("--service-start", document)
             self.assertIn("--service-end", document)
             self.assertIn("07:30:00", document)
+            self.assertIn("12:00:00", document)
+            self.assertIn("加1天", document)
+            self.assertIn("加2天", document)
+            self.assertIn("11:59:59", document)
             self.assertIn("21:59:59", document)
+            self.assertIn("occurrenceTimesMatchActivationPeriodRule", document)
             self.assertIn("停止生成", document)
             self.assertNotIn("早于激活时间", document)
             self.assertNotIn("小于激活时间", document)
@@ -61,9 +74,16 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn("monthlyPatient18", document)
             self.assertIn("medicationReminder13", document)
             self.assertIn("medicationReminder14", document)
+            self.assertIn("medicationReminder15", document)
             self.assertIn("sourceConfirmationTime", document)
-        self.assertIn("不从旧 `手术名称`、`联合用药` 或 `用药方案` 文本反推临床事实", self.skill)
-        self.assertIn("不得读取或解析旧 `手术名称`、`联合用药`、`用药方案`", self.contract)
+            self.assertIn(
+                "不从旧 `手术名称`、`耗材名称`、`联合用药` 或 `用药方案` 文本反推临床事实",
+                self.skill,
+            )
+            self.assertIn(
+                "不得读取或解析旧 `手术名称`、`耗材名称`、`联合用药`、`用药方案`",
+                self.contract,
+            )
 
     def test_documents_patient_count_scaled_plan_diversity(self):
         for document in [self.skill, self.contract, self.clinical_rules]:

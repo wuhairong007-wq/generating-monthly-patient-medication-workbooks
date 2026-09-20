@@ -18,6 +18,7 @@ REMINDER_HEADERS = [
     "用药方案确认时间", "用药方案", "用药周期", "方案链接", "本月是否发生不良反应（AE）",
 ]
 REMINDER_SURGERY_HEADERS = REMINDER_HEADERS[:7] + ["手术名称"] + REMINDER_HEADERS[7:]
+REMINDER_CONSUMABLE_HEADERS = REMINDER_HEADERS[:7] + ["手术名称", "耗材名称"] + REMINDER_HEADERS[7:]
 
 
 def as_text(value):
@@ -70,8 +71,10 @@ def main():
         input_format = "medicationReminder13"
     elif headers == REMINDER_SURGERY_HEADERS:
         input_format = "medicationReminder14"
+    elif headers == REMINDER_CONSUMABLE_HEADERS:
+        input_format = "medicationReminder15"
     else:
-        raise ValueError(f"第二行表头不符合18列源表或13/14列用药提醒契约：{headers}")
+        raise ValueError(f"第二行表头不符合18列源表或13/14/15列用药提醒契约：{headers}")
 
     patients = []
     seen = set()
@@ -120,7 +123,7 @@ def main():
             "adverseEventGrade": as_text(row.get("AE严重程度分级")),
             "patientTags": normalize_patient_tag(row.get("患者标签")),
         }
-        if input_format in {"medicationReminder13", "medicationReminder14"}:
+        if input_format in {"medicationReminder13", "medicationReminder14", "medicationReminder15"}:
             patient["sourceConfirmationTime"] = confirmation_time
             patient["confirmationTime"] = confirmation_time
         patients.append(patient)

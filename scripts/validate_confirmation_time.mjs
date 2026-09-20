@@ -13,7 +13,7 @@ export function validateReminderConfirmation({ patient, reminderValue, inputForm
   const confirmationText = String(reminderValue ?? "").trim();
   const confirmation = parseDateTime(confirmationText, `${patient.userid}确认时间`);
 
-  if (["medicationReminder13", "medicationReminder14"].includes(inputFormat)) {
+  if (["medicationReminder13", "medicationReminder14", "medicationReminder15"].includes(inputFormat)) {
     const sourceText = String(patient.sourceConfirmationTime ?? "").trim();
     assert(sourceText, `${patient.userid}缺少源用药方案确认时间`);
     parseDateTime(sourceText, `${patient.userid}源用药方案确认时间`);

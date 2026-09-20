@@ -50,6 +50,7 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                             plan['minimumDiseaseMedicationCount'] = 3
                             plan['medicationGroups'] = [group(f'组{i}', [medication(f'测试药{i}')]) for i in range(3)]
                     spec = profile(plans, productType=product_type,
+                                   companyName="商联医药(河南)有限公司（器械）" if product_type == "器械" else "测试公司",
                                    baseMedication=medication("测试产品") if product_type == "用药" else None,
                                    surgeryRules=[],
                                    simulatedSurgeryRules=[{"when": {"diseaseEqualsAny": [d]}, "surgeryName": s,
@@ -72,19 +73,21 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     self.run_script("verify_workbooks.mjs", *verify_args)
                     workbook = openpyxl.load_workbook(reminder, data_only=True)
                     sheet = workbook.active
-                    self.assertEqual(sheet.max_column, 14)
+                    self.assertEqual(sheet.max_column, 15)
                     self.assertFalse(any('模拟' in str(cell.value or '') for row in sheet for cell in row))
-                    self.assertEqual([sheet.cell(2, c).value for c in (7, 8, 9)], ["既往过敏史", "手术名称", "联合用药"])
+                    self.assertEqual([sheet.cell(2, c).value for c in (7, 8, 9, 10)], ["既往过敏史", "手术名称", "耗材名称", "联合用药"])
                     self.assertEqual([sheet.cell(r, 8).value or "" for r in (3, 4)],
                                      ["测试甲术式", "测试乙术式"] if product_type == "器械" else ["", ""])
-                    self.assertEqual(sheet["N4"].value, "是")
-                    self.assertEqual(sheet["J3"].value, "2026-04-10 12:00:00")
-                    self.assertIn("A1:N1", {str(r) for r in sheet.merged_cells.ranges})
-                    self.assertEqual(next(iter(sheet.tables.values())).ref, "A2:N4")
+                    self.assertEqual([sheet.cell(r, 9).value or "" for r in (3, 4)],
+                                     ["测试产品", "测试产品"] if product_type == "器械" else ["", ""])
+                    self.assertEqual(sheet["O4"].value, "是")
+                    self.assertEqual(sheet["K3"].value, "2026-04-10 12:00:00")
+                    self.assertIn("A1:O1", {str(r) for r in sheet.merged_cells.ranges})
+                    self.assertEqual(next(iter(sheet.tables.values())).ref, "A2:O4")
                     workbook.close()
                     self.run_script("extract_patients.py", "--source", reminder, "--output", folder / "roundtrip.json")
                     roundtrip = json.loads((folder / "roundtrip.json").read_text())
-                    self.assertEqual(roundtrip["inputFormat"], "medicationReminder14")
+                    self.assertEqual(roundtrip["inputFormat"], "medicationReminder15")
                     self.assertEqual([p["userid"] for p in roundtrip["patients"]], ["test-a", "test-b"])
                     self.assertEqual(roundtrip["patients"][0]["sourceConfirmationTime"], "2026-04-10 12:00:00")
                     if os.environ.get("WORKBOOK_TEST_ARTIFACTS"):

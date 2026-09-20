@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 
 import {
+  validateCompanyConsumableRules,
   validateMedicationMinimums,
   validateMedicationPlanFields,
 } from "../scripts/validate_medication_payload.mjs";
 
-function payload({ combinedMedication, diseaseMedicationNames, minimumsByUserid, productType = "用药" }) {
+function payload({ combinedMedication, diseaseMedicationNames, minimumsByUserid, productType = "用药", companyName = "测试公司" }) {
   const value = {
     meta: {
+      companyName,
       productType,
       productName: "当前产品",
+      consumableName: companyName === "商联医药(河南)有限公司（器械）" && productType === "器械" ? "当前产品" : "",
       minimumCombinedMedicationCount: 3,
       minimumDiseaseMedicationCount: 2,
       diseaseMedicationNamesByUserid: { u1: diseaseMedicationNames },
@@ -212,5 +215,32 @@ assert.throws(
   () => validateMedicationPlanFields(incorrectUniqueMetadataPayload),
   /用药方案去重数量与元数据不一致/,
 );
+
+const specialDevicePayload = payload({
+  companyName: "商联医药(河南)有限公司（器械）",
+  productType: "器械",
+  combinedMedication: ["药A", "药B", "药C"],
+  diseaseMedicationNames: ["药A", "药B", "药C"],
+});
+assert.doesNotThrow(() => validateCompanyConsumableRules(specialDevicePayload));
+
+const specialDeviceWithProductInPrescription = structuredClone(specialDevicePayload);
+specialDeviceWithProductInPrescription.records[0].prescriptionList += " + 当前产品配套说明";
+assert.throws(
+  () => validateCompanyConsumableRules(specialDeviceWithProductInPrescription),
+  /处方清单不能包含当前产品名称/,
+);
+
+const wrongConsumableName = structuredClone(specialDevicePayload);
+wrongConsumableName.meta.consumableName = "错误耗材";
+assert.throws(() => validateCompanyConsumableRules(wrongConsumableName), /耗材名称/);
+
+const regularDevicePayload = payload({
+  productType: "器械",
+  combinedMedication: ["药A", "药B", "药C"],
+  diseaseMedicationNames: ["药A", "药B", "药C"],
+});
+regularDevicePayload.meta.consumableName = "当前产品";
+assert.throws(() => validateCompanyConsumableRules(regularDevicePayload), /非特殊场景耗材名称必须为空/);
 
 console.log("validate_medication_payload tests passed");

@@ -2,6 +2,22 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+const SPECIAL_DEVICE_COMPANY = "商联医药(河南)有限公司（器械）";
+
+export function validateCompanyConsumableRules(payload) {
+  const { meta, records = [] } = payload;
+  assert(typeof meta.companyName === "string" && meta.companyName.trim(), "公司名称不能为空");
+  const special = meta.companyName === SPECIAL_DEVICE_COMPANY && meta.productType === "器械";
+  if (special) {
+    assert(meta.consumableName === meta.productName, "特殊器械场景耗材名称必须等于当前产品名称");
+    for (const record of records) {
+      assert(!String(record.prescriptionList ?? "").includes(meta.productName), `${record.userid}处方清单不能包含当前产品名称`);
+    }
+  } else {
+    assert(String(meta.consumableName ?? "") === "", "非特殊场景耗材名称必须为空");
+  }
+}
+
 export function validateSurgeryNames(payload) {
   const uncertain = /待确认|待核实|待核对|待明确|待定|未详|不详|未明确|不明确|未确定|不确定|未核实|尚未核实|适用性不明|需确认|需核实|需明确|可能|疑似|暂不确定|无法确定|模拟候选/;
   const patients = new Map((payload.patients ?? []).map(patient => [patient.userid, patient]));

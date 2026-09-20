@@ -67,34 +67,26 @@ def parse_service_period(start, end):
 
 
 def occurrence_time(userid, activated_at, service_start, service_end):
-    windows = []
-    current_day = service_start.date()
-    last_day = service_end.date()
-    while current_day <= last_day:
-        window_start = datetime.combine(current_day, datetime.min.time()).replace(hour=7, minute=30)
-        window_end = datetime.combine(current_day, datetime.min.time()).replace(hour=21, minute=59, second=59)
-        window_start = max(window_start, service_start)
-        window_end = min(window_end, service_end)
-        if current_day < activated_at.date():
-            current_day += timedelta(days=1)
-            continue
-        if current_day == activated_at.date():
-            window_start = max(window_start, activated_at.replace(microsecond=0) + timedelta(seconds=1))
-        if window_start <= window_end:
-            windows.append((window_start, window_end, int((window_end - window_start).total_seconds()) + 1))
-        current_day += timedelta(days=1)
-    total_seconds = sum(item[2] for item in windows)
-    if not total_seconds:
+    morning_activation = activated_at.time() < datetime.strptime("12:00:00", "%H:%M:%S").time()
+    target_date = activated_at.date() + timedelta(days=1 if morning_activation else 2)
+    if morning_activation:
+        window_start = datetime.combine(target_date, datetime.min.time()).replace(hour=12)
+        window_end = datetime.combine(target_date, datetime.min.time()).replace(hour=21, minute=59, second=59)
+        period_label = "下午12:00:00至21:59:59"
+    else:
+        window_start = datetime.combine(target_date, datetime.min.time()).replace(hour=7, minute=30)
+        window_end = datetime.combine(target_date, datetime.min.time()).replace(hour=11, minute=59, second=59)
+        period_label = "上午07:30:00至11:59:59"
+
+    if window_start < service_start or window_end > service_end:
         raise ValueError(
-            f"{userid}激活时间{activated_at}之后在服务周期"
-            f"{service_start.date()} 至 {service_end.date()}的每日07:30至21:59:59内无可用发生时间，停止生成"
+            f"{userid}激活时间{activated_at}对应的目标发生时间为"
+            f"{target_date} {period_label}，超出服务周期"
+            f"{service_start.date()} 至 {service_end.date()}，停止生成"
         )
-    offset = stable_number(userid, "occurrence") % total_seconds
-    for window_start, _, seconds in windows:
-        if offset < seconds:
-            return (window_start + timedelta(seconds=offset)).strftime("%Y-%m-%d %H:%M:%S")
-        offset -= seconds
-    raise AssertionError("发生时间窗口计算错误")
+    seconds = int((window_end - window_start).total_seconds()) + 1
+    offset = stable_number(userid, "occurrence") % seconds
+    return (window_start + timedelta(seconds=offset)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def discovery_method(userid):

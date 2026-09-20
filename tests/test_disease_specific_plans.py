@@ -120,6 +120,7 @@ def group(group_id, alternatives, *, when=None, required=False):
 def profile(plans, **overrides):
     value = {
         "schemaVersion": 2,
+        "companyName": "测试公司",
         "productType": "用药",
         "productName": "测试产品",
         "evidence": [{"title": "产品说明书", "url": "https://example.test/label", "scope": "产品用法"}],
@@ -170,6 +171,17 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("schemaVersion必须为2", result.stderr)
+
+    def test_requires_company_name(self):
+        product_profile = profile([
+            disease_plan("脑梗死方案", ["脑梗死"], [], allow_product_only=True),
+        ])
+        product_profile.pop("companyName")
+
+        result, _ = self.run_generator([patient("u1", "脑梗死")], product_profile)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("公司名称为空", result.stderr)
 
     def test_rejects_global_disease_medication_fields(self):
         product_profile = profile([
@@ -399,6 +411,55 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(payload["records"][0]["combinedMedication"], ["测试产品", "疾病药A", "疾病药B"])
         self.assertEqual(payload["meta"]["diseaseMedicationNamesByUserid"], {"u1": ["疾病药A", "疾病药B"]})
+
+    def test_special_device_company_sets_consumable_name_and_excludes_product_from_prescription(self):
+        plans = [disease_plan("围手术期方案", ["腹腔粘连"], [
+            group("疾病药A", [medication("围手术期药A")]),
+            group("疾病药B", [medication("围手术期药B")]),
+            group("疾病药C", [medication("围手术期药C")]),
+        ])]
+        product_profile = profile(
+            plans,
+            companyName="商联医药(河南)有限公司（器械）",
+            productType="器械",
+            productName="测试耗材",
+            baseMedication=None,
+            surgeryRules=[{
+                "when": {"diseaseEqualsAny": ["腹腔粘连"]},
+                "surgeryName": "腹腔粘连松解术",
+            }],
+        )
+
+        result, payload = self.run_generator([patient("u1", "腹腔粘连")], product_profile)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["meta"]["companyName"], "商联医药(河南)有限公司（器械）")
+        self.assertEqual(payload["meta"]["consumableName"], "测试耗材")
+        self.assertNotIn("测试耗材", payload["records"][0]["prescriptionList"])
+
+    def test_special_device_company_rejects_product_name_inside_prescription_text(self):
+        plans = [disease_plan("围手术期方案", ["腹腔粘连"], [
+            group("疾病药A", [medication("围手术期药A", precautions="测试耗材配套使用")]),
+            group("疾病药B", [medication("围手术期药B")]),
+            group("疾病药C", [medication("围手术期药C")]),
+        ])]
+        product_profile = profile(
+            plans,
+            companyName="商联医药(河南)有限公司（器械）",
+            productType="器械",
+            productName="测试耗材",
+            baseMedication=None,
+            surgeryRules=[{
+                "when": {"diseaseEqualsAny": ["腹腔粘连"]},
+                "surgeryName": "腹腔粘连松解术",
+            }],
+        )
+
+        result, payload = self.run_generator([patient("u1", "腹腔粘连")], product_profile)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(payload)
+        self.assertIn("处方清单不能包含当前产品名称", result.stderr)
 
     def test_reminder_input_reuses_source_confirmation_time(self):
         reminder_patient = patient("u1", "脑梗死")

@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 import {
+  validateCompanyConsumableRules,
   validateMedicationMinimums,
   validateMedicationPlanFields,
   validateSurgeryNames,
@@ -30,6 +31,7 @@ for (const key of ["payload", "reminder", "medication", "report"]) {
   if (!args[key]) throw new Error(`缺少--${key}`);
 }
 const payload = JSON.parse(await fs.readFile(path.resolve(args.payload), "utf8"));
+validateCompanyConsumableRules(payload);
 validateMedicationMinimums(payload);
 validateMedicationPlanFields(payload);
 validateSurgeryNames(payload);
@@ -48,20 +50,21 @@ const reminderWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(re
 const reminderSheet = reminderWorkbook.worksheets.getItemAt(0);
 const reminderValues = reminderSheet.getUsedRange(true).values;
 const reminderHeaders = [
-  "序号", "患者唯一标识", "姓名", "性别", "年龄", "疾病", "既往过敏史", "手术名称", "联合用药",
+  "序号", "患者唯一标识", "姓名", "性别", "年龄", "疾病", "既往过敏史", "手术名称", "耗材名称", "联合用药",
   "用药方案确认时间", "用药方案", "用药周期", "方案链接", "本月是否发生不良反应（AE）",
 ];
-assert(JSON.stringify(reminderValues[1]) === JSON.stringify(reminderHeaders), "用药提醒14列表头或手术名称列位置错误");
+assert(JSON.stringify(reminderValues[1]) === JSON.stringify(reminderHeaders), "用药提醒15列表头或手术/耗材名称列位置错误");
 assert(reminderValues.length === patientCount + 2, `用药提醒行数错误：${reminderValues.length}`);
 const reminderRows = reminderValues.slice(2);
 const reminderUserids = reminderRows.map((row) => String(row[1] ?? ""));
 assert(JSON.stringify(reminderUserids) === JSON.stringify(expectedUserids), "用药提醒userid集合或顺序与源数据不一致");
 assert(reminderRows.every((row, index) => String(row[7] ?? "") === payload.records[index].surgeryName), "用药提醒手术名称与生成记录不一致");
-assert(reminderRows.every((row, index) => row[8] === payload.records[index].combinedMedication.join("、")), "用药提醒联合用药与生成记录不一致");
-assert(reminderRows.every((row, index) => row[10] === payload.patients[index].medicationPlan), "用药提醒用药方案与生成记录不一致");
-assert(reminderRows.every((row, index) => row[11] === payload.patients[index].medicationCycle && String(row[12] ?? "") === "" && row[13] === payload.patients[index].adverseEvent), "用药提醒周期、链接或AE列错位");
+assert(reminderRows.every((row) => String(row[8] ?? "") === payload.meta.consumableName), "用药提醒耗材名称与生成记录不一致");
+assert(reminderRows.every((row, index) => row[9] === payload.records[index].combinedMedication.join("、")), "用药提醒联合用药与生成记录不一致");
+assert(reminderRows.every((row, index) => row[11] === payload.patients[index].medicationPlan), "用药提醒用药方案与生成记录不一致");
+assert(reminderRows.every((row, index) => row[12] === payload.patients[index].medicationCycle && String(row[13] ?? "") === "" && row[14] === payload.patients[index].adverseEvent), "用药提醒周期、链接或AE列错位");
 if (payload.meta.productType === "用药") {
-  assert(reminderRows.every((row) => String(row[8]).split("、")[0] === expectedProduct), "用药提醒联合用药首项缺少当前产品");
+  assert(reminderRows.every((row) => String(row[9]).split("、")[0] === expectedProduct), "用药提醒联合用药首项缺少当前产品");
   assert(payload.records.every((record) => record.surgeryName === ""), "用药场景surgeryName必须为空");
 } else {
   assert(payload.records.every((record) => record.surgeryName), "器械场景surgeryName不能为空");
@@ -71,7 +74,7 @@ for (let index = 0; index < reminderRows.length; index += 1) {
   const patient = payload.patients[index];
   validateReminderConfirmation({
     patient,
-    reminderValue: reminderRows[index][9],
+    reminderValue: reminderRows[index][10],
     inputFormat: payload.meta.inputFormat,
   });
 }
@@ -96,9 +99,9 @@ assert(medicationRows.every((row) => !/(肌肉注射|肌内注射|静脉滴注|�
 assert(medicationRows.every((row) => Number.isInteger(row[8]) && row[8] > 0), "疗程天数存在非正整数");
 assert(medicationSheet.tables.items.length === 1, "用药方案必须且只能包含一个表格对象");
 
-const reminderFirst = await reminderWorkbook.inspect({ kind: "region", sheetId: reminderSheet.name, range: "A1:N6", maxChars: 5000 });
-const reminderMiddle = await reminderWorkbook.inspect({ kind: "region", sheetId: reminderSheet.name, range: `A${Math.max(3, Math.floor(patientCount / 2))}:N${Math.max(3, Math.floor(patientCount / 2) + 3)}`, maxChars: 5000 });
-const reminderLast = await reminderWorkbook.inspect({ kind: "region", sheetId: reminderSheet.name, range: `A${Math.max(3, patientCount)}:N${patientCount + 2}`, maxChars: 5000 });
+const reminderFirst = await reminderWorkbook.inspect({ kind: "region", sheetId: reminderSheet.name, range: "A1:O6", maxChars: 5000 });
+const reminderMiddle = await reminderWorkbook.inspect({ kind: "region", sheetId: reminderSheet.name, range: `A${Math.max(3, Math.floor(patientCount / 2))}:O${Math.max(3, Math.floor(patientCount / 2) + 3)}`, maxChars: 5000 });
+const reminderLast = await reminderWorkbook.inspect({ kind: "region", sheetId: reminderSheet.name, range: `A${Math.max(3, patientCount)}:O${patientCount + 2}`, maxChars: 5000 });
 const medicationFirst = await medicationWorkbook.inspect({ kind: "region", sheetId: medicationSheet.name, range: "A1:J6", maxChars: 5000 });
 const medicationMiddleRow = Math.max(3, Math.floor(medicationRows.length / 2));
 const medicationLastRow = medicationRows.length + 2;
@@ -121,6 +124,8 @@ const verification = {
   medicationMappingMatch: true,
   surgeryColumnPositionValid: true,
   surgeryColumnMatchesPayload: true,
+  consumableColumnPositionValid: true,
+  consumableColumnMatchesPayload: true,
   medicationCountDistribution: Object.fromEntries([...new Set(payload.records.map((record) => record.combinedMedication.length))].sort().map((count) => [count, payload.records.filter((record) => record.combinedMedication.length === count).length])),
   uniqueMedicationPlanCount: payload.meta.uniqueMedicationPlanCount,
   minimumUniqueMedicationPlanCount: payload.meta.minimumUniqueMedicationPlanCount,

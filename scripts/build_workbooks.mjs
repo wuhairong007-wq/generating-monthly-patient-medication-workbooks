@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 import {
+  validateCompanyConsumableRules,
   validateMedicationMinimums,
   validateMedicationPlanFields,
   validateSurgeryNames,
@@ -46,7 +47,7 @@ async function progress(message) {
 }
 
 const reminderHeaders = [
-  "序号", "患者唯一标识", "姓名", "性别", "年龄", "疾病", "既往过敏史", "手术名称", "联合用药",
+  "序号", "患者唯一标识", "姓名", "性别", "年龄", "疾病", "既往过敏史", "手术名称", "耗材名称", "联合用药",
   "用药方案确认时间", "用药方案", "用药周期", "方案链接", "本月是否发生不良反应（AE）",
 ];
 const medicationHeaders = [
@@ -101,6 +102,7 @@ async function formatRowsInChunks(sheet, startRowNumber, rowCount, endColumn, la
 const payload = earlyPayload;
 await progress("payload loaded");
 const { patients, records, medicationItems, meta } = payload;
+validateCompanyConsumableRules(payload);
 validateMedicationMinimums(payload);
 validateMedicationPlanFields(payload);
 validateSurgeryNames(payload);
@@ -108,7 +110,7 @@ validateSimulationPresentation(payload, [reminderOutputPath, medicationOutputPat
 validateSimulationPresentation(payload, [reminderOutputPath, medicationOutputPath], [{
   name: "展示字段",
   values: [
-    [meta.productName, meta.monthLabel],
+    [meta.companyName, meta.productName, meta.consumableName, meta.monthLabel],
     ...patients.map(p => [p.userid, p.patientName, p.gender, p.age, p.disease, p.allergyHistory, p.confirmationTime, p.medicationPlan, p.medicationCycle, p.adverseEvent]),
     ...records.map(r => [r.surgeryName, r.combinedMedication.join("、")]),
     ...medicationItems.map(m => [m.drugName, m.specification, m.singleDose, m.frequency, m.medicationTime, m.treatmentDays, m.precautions]),
@@ -157,7 +159,7 @@ await fs.mkdir(outputDir, { recursive: true });
 const reminderWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(reminderTemplatePath));
 await progress("reminder template imported");
 const reminderSheet = reminderWorkbook.worksheets.getItemAt(0);
-assert(JSON.stringify(reminderSheet.getRange("A2:N2").values[0].map((value) => String(value ?? "").trim())) === JSON.stringify(reminderHeaders), "用药提醒模板表头不匹配");
+assert(JSON.stringify(reminderSheet.getRange("A2:O2").values[0].map((value) => String(value ?? "").trim())) === JSON.stringify(reminderHeaders), "用药提醒模板表头不匹配");
 const reminderRows = patients.map((patient, index) => {
   const record = recordByUserid.get(patient.userid);
   return [
@@ -169,6 +171,7 @@ const reminderRows = patients.map((patient, index) => {
     patient.disease,
     patient.allergyHistory,
     record.surgeryName,
+    meta.consumableName,
     record.combinedMedication.join("、"),
     patient.confirmationTime,
     patient.medicationPlan,
@@ -179,12 +182,12 @@ const reminderRows = patients.map((patient, index) => {
 });
 await progress("reminder rows prepared");
 const reminderExistingRows = reminderSheet.getUsedRange(true).values.length;
-if (reminderExistingRows >= 3) reminderSheet.getRange(`A3:N${reminderExistingRows}`).clear({ applyTo: "contents" });
+if (reminderExistingRows >= 3) reminderSheet.getRange(`A3:O${reminderExistingRows}`).clear({ applyTo: "contents" });
 const titlePrefix = meta.monthLabel ? `${meta.monthLabel}-` : "";
 reminderSheet.getRange("A1").values = [[`${titlePrefix}${meta.productName}用药提醒服务明细`]];
 reminderSheet.getRangeByIndexes(2, 0, reminderRows.length, reminderHeaders.length).values = reminderRows;
 await progress("reminder values written");
-const reminderDataRange = reminderSheet.getRange(`A3:N${reminderRows.length + 2}`);
+const reminderDataRange = reminderSheet.getRange(`A3:O${reminderRows.length + 2}`);
 reminderDataRange.format = {
   font: { name: "Calibri", size: 11 },
   wrapText: true,
@@ -193,13 +196,13 @@ reminderDataRange.format = {
 };
 reminderSheet.getRange(`A3:A${reminderRows.length + 2}`).format.horizontalAlignment = "center";
 reminderSheet.getRange(`D3:E${reminderRows.length + 2}`).format.horizontalAlignment = "center";
-reminderSheet.getRange(`J3:J${reminderRows.length + 2}`).format.horizontalAlignment = "center";
-reminderSheet.getRange(`L3:N${reminderRows.length + 2}`).format.horizontalAlignment = "center";
-reminderSheet.getRange(`A3:N${reminderRows.length + 2}`).format.rowHeight = 72;
-const reminderWidths = [8, 34, 12, 8, 8, 18, 20, 36, 24, 22, 68, 12, 18, 20];
+reminderSheet.getRange(`K3:K${reminderRows.length + 2}`).format.horizontalAlignment = "center";
+reminderSheet.getRange(`M3:O${reminderRows.length + 2}`).format.horizontalAlignment = "center";
+reminderSheet.getRange(`A3:O${reminderRows.length + 2}`).format.rowHeight = 72;
+const reminderWidths = [8, 34, 12, 8, 8, 18, 20, 36, 24, 24, 22, 68, 12, 18, 30];
 reminderWidths.forEach((width, index) => reminderSheet.getRange(`${columnName(index + 1)}:${columnName(index + 1)}`).format.columnWidth = width);
 for (const table of [...(reminderSheet.tables.items ?? [])]) table.delete();
-const reminderTable = reminderSheet.tables.add(`A2:N${reminderRows.length + 2}`, true, "MedicationReminderTable");
+const reminderTable = reminderSheet.tables.add(`A2:O${reminderRows.length + 2}`, true, "MedicationReminderTable");
 reminderTable.style = "TableStyleMedium2";
 reminderSheet.freezePanes.freezeRows(2);
 reminderSheet.showGridLines = false;
@@ -255,9 +258,9 @@ const reminderLastRow = reminderRows.length + 2;
 const medicationLastRow = medicationRows.length + 2;
 const reminderMiddle = Math.floor(reminderLastRow / 2);
 const medicationMiddle = Math.floor(medicationLastRow / 2);
-await savePreview(reminderWorkbook, reminderSheet, `A1:N${Math.min(10, reminderLastRow)}`, "reminder-first.png");
-await savePreview(reminderWorkbook, reminderSheet, `A${Math.max(3, reminderMiddle - 3)}:N${Math.min(reminderLastRow, reminderMiddle + 3)}`, "reminder-middle.png");
-await savePreview(reminderWorkbook, reminderSheet, `A${Math.max(3, reminderLastRow - 6)}:N${reminderLastRow}`, "reminder-last.png");
+await savePreview(reminderWorkbook, reminderSheet, `A1:O${Math.min(10, reminderLastRow)}`, "reminder-first.png");
+await savePreview(reminderWorkbook, reminderSheet, `A${Math.max(3, reminderMiddle - 3)}:O${Math.min(reminderLastRow, reminderMiddle + 3)}`, "reminder-middle.png");
+await savePreview(reminderWorkbook, reminderSheet, `A${Math.max(3, reminderLastRow - 6)}:O${reminderLastRow}`, "reminder-last.png");
 await savePreview(medicationWorkbook, medicationSheet, "A1:J10", "medication-first.png");
 await savePreview(medicationWorkbook, medicationSheet, `A${Math.max(3, medicationMiddle - 3)}:J${Math.min(medicationLastRow, medicationMiddle + 3)}`, "medication-middle.png");
 await savePreview(medicationWorkbook, medicationSheet, `A${Math.max(3, medicationLastRow - 6)}:J${medicationLastRow}`, "medication-last.png");
@@ -285,6 +288,8 @@ const qc = {
   reminderRows: reminderRows.length,
   medicationRows: medicationRows.length,
   productName: meta.productName,
+  companyName: meta.companyName,
+  consumableNameValid: reminderRows.every((row) => String(row[8] ?? "") === meta.consumableName),
   surgeryNameValid: meta.productType === "用药" ? records.every((record) => record.surgeryName === "") : records.every((record) => record.surgeryName),
   productIncludedFirst: meta.productType === "用药" ? records.every((record) => record.combinedMedication[0] === meta.productName) : null,
   medicationListMatchesCombinedMedication: records.every((record) => JSON.stringify((itemsByUserid.get(record.userid) ?? []).map((item) => item.drugName)) === JSON.stringify(record.combinedMedication)),
