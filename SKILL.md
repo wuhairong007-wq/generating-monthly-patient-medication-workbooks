@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks, or asks 生成洞察报告、生成患者调研访谈、生成深度访谈 from service Excel files to create Word reports. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.20.0"
+  version: "1.22.0"
 ---
 
 # 生成月度患者用药清单
@@ -17,6 +17,7 @@ metadata:
 
 - `生成洞察报告`：执行 [references/insight-report-workflow.md](references/insight-report-workflow.md)。需要产品、服务周期，以及月度患者清单、患者随访、症状自评、用药提醒四类必填 Excel，可选不良反应清单（常用五表）；兼容原6/7表输入；输出九章 Word 报告。
 - `生成患者调研访谈` 或兼容指令 `生成深度访谈`：执行 [references/patient-interview-workflow.md](references/patient-interview-workflow.md)。需要调研时间、调研数量，以及月度患者清单、患者随访、症状自评、用药提醒、不良反应清单五表，兼容原六表组合。`调研方式` 默认为深度访谈；电话随访输出1份明细 Word，深度访谈输出分析和明细共2份 Word。默认已授权AI模拟访谈，无需人工确认，直接生成完整问答和对应分析，不因缺少真实访谈原文退回提纲。模拟文件名含“模拟”，交付时说明情景性质；用户明确要求真实访谈或仅提纲时按该要求执行。
+- 患者访谈记录明细 Word 的主标题固定为“患者访谈记录明细”，不得添加产品名称；“一、调研对象概述”的总体样本文案不得包含产品名称，不写“使用/应用/接受某产品”等措辞，按实际人数和严重程度写作，例如“本次调研访谈14位发生中度不良反应的患者”。交付文件名继续使用 `<产品>_患者访谈记录明细_<YYYY-MM>[_模拟].docx`，分析报告及逐人内容中必要的产品分析不受此限制。
 - 两项 Word 功能使用当前技能内置 DOCX 模板；洞察报告固定结构和访谈模板包克隆方式各自独立。生成 Word 时使用可用的 `documents:documents` 完成排版及视觉核验，或按参考流程直接调用可用的 `render_docx.py`；缺少渲染环境时如实记录未完成视觉核验。
 - 深度访谈使用对应患者姓名替代 P01、P02 等编号：两份报告的概况表表头改为“姓名”，逐人标题、正文及引语署名统一取主表姓名；完整患者ID继续保留用于核验。姓名映射与缺失处理见访谈流程。
 
@@ -64,7 +65,7 @@ metadata:
 
 原有用药/器械流程提取 `依据文件`、`公司`、`产品类型` 和 `产品名称`；`公司` 必填，并写入 product profile 的 `companyName` 和 payload 的 `meta.companyName`。
 
-输入文件可为标准 18 列月度患者源表，也可为旧版 13/14 列或当前 15 列“用药提醒”表。15 列格式在“手术名称”后增加“耗材名称”。识别为提醒表时，沿用已有的 `用药方案确认时间`，不把它改名为激活时间，也不从旧 `手术名称`、`耗材名称`、`联合用药` 或 `用药方案` 文本反推临床事实；缺少的激活日期、联系方式等字段保持为空。
+输入文件可为标准 18 列月度患者源表，也可为旧版 13/14/15 列、新版 16 列或生成结果回读的 18 列“用药提醒”表。新版 16 列在“既往过敏史”后增加“用户类型、来源任务ID、来源月份”；生成结果 18 列再增加“手术名称、耗材名称”。识别为提醒表时，沿用已有的 `用药方案确认时间`，不把它改名为激活时间，也不从旧 `手术名称`、`耗材名称`、`联合用药` 或 `用药方案` 文本反推临床事实；来源三列逐患者原值透传，空值保持为空，不推断来源任务或月份；缺少的激活日期、联系方式等字段保持为空。
 
 典型触发：`生成月度患者清单 依据文件：/path/月度患者清单.xlsx 公司：某医药公司 产品类型：用药 产品名称：血栓通胶囊`。
 
@@ -78,7 +79,7 @@ metadata:
    python scripts/extract_patients.py --source INPUT.xlsx --output patients.json
    ```
 
-   提取结果的 `inputFormat` 为 `monthlyPatient18`、`medicationReminder13`、`medicationReminder14` 或 `medicationReminder15`。18 列源表的患者标签统一使用“正常”表示无风险标签，兼容旧值“无”和当前值“正常”：旧值“无”在提取后规范化为“正常”，其他标签保持原值。13/14/15 列提醒表必须有合法的 `用药方案确认时间`；提取器将其保留为 `sourceConfirmationTime`，生成器会原样复用该确认时间，验证器不要求不存在的 `activateTime`。
+   提取结果的 `inputFormat` 为 `monthlyPatient18`、`medicationReminder13`、`medicationReminder14`、`medicationReminder15`、`medicationReminder16` 或 `medicationReminder18`。18 列月度源表的患者标签统一使用“正常”表示无风险标签，兼容旧值“无”和当前值“正常”：旧值“无”在提取后规范化为“正常”，其他标签保持原值。各用药提醒格式必须有合法的 `用药方案确认时间`；提取器将其保留为 `sourceConfirmationTime`，生成器会原样复用该确认时间，验证器不要求不存在的 `activateTime`。新版来源字段保存为 `userType`、`sourceTaskId` 和 `sourceMonth`。
 
 2. 查看 `patients.json` 的疾病、年龄、性别、过敏史和 AE 分布。按 `ceil(患者数/100)` 计算用药方案建议去重目标，即每增加 100 条记录增加 1 组，用于优先丰富方案多样性但不作为生成阻断条件。核对当前产品的药品说明书/监管信息及每个疾病直接相关的指南，建立 `schemaVersion: 2` 的 `product-profile.json`；其中 `companyName` 必须精确保存用户“公司：”参数。不要从示例产品复制药物；每个疾病治疗候选药必须声明 `role: diseaseTreatment`、疾病关联理由和药品依据。
 3. profile 中把当前药品设为 `baseMedication`；仅把复溶液等与产品直接绑定的辅助品放入 `directProductAdjuncts`。按输入中的疾病分别建立 `diseasePlans`，每个方案都要有疾病条件、独立依据、`allowProductOnly` 和 `medicationGroups`。疾病方案未设置数量字段时，默认至少 3 种联合用药和至少 2 种疾病治疗药；只有产品说明书或直接相关指南支持时，才可为单药或双药方案设置 `minimumCombinedMedicationCount` 、`minimumDiseaseMedicationCount` 和非空 `medicationCountRationale`。念珠菌性阴道炎、复发性阴道念珠菌病、混合性阴道感染和二重感染等可能适用克霉唑阴道片单药或双药方案的疾病，必须由本次 profile 的证据明确配置，不能依据疾病名称自动放宽。每位患者必须且只能匹配一个 `diseasePlan`，并从该方案中选出该方案宣告的最少疾病治疗药；直接产品辅助品不计入疾病治疗药数量。优先为每个药组配置多个同疾病、同治疗角色且有依据的安全候选；同一药品的已核实规格、剂量、频次、时段或疗程变体使用 `regimenVariants` 配置，并逐变体提供药品依据，生成器按输入顺序对安全候选组合和变体做确定性轮换。
@@ -102,7 +103,7 @@ metadata:
      --output-dir OUTPUT_DIR
    ```
 
-7. 对脚本返回的两个工作簿运行 `scripts/verify_workbooks.mjs`。“用药提醒”统一输出 15 列，G 列为“既往过敏史”、H 列为“手术名称”、I 列为“耗材名称”、J 列为“联合用药”；H 列逐行写入对应 userid 的 `records[].surgeryName`。仅当 `companyName` 精确等于“商联医药(河南)有限公司（器械）”且产品类型为器械时，I 列逐行填写当前产品名称；其他场景留空。验证实际工作簿的列位置、术式值和耗材值，不能只检查 payload。检查首段、中段、末段预览；任何 userid、术式、耗材、药物映射、频次、时间、疗程或公式错误都必须修复后重跑。
+7. 对脚本返回的两个工作簿运行 `scripts/verify_workbooks.mjs`。用药提醒固定输出 18 列：G 列后依次为 H“用户类型”、I“来源任务ID”、J“来源月份”、K“手术名称”、L“耗材名称”、M“联合用药”；K 列逐行写入 `records[].surgeryName`。仅当 `companyName` 精确等于“商联医药(河南)有限公司（器械）”且产品类型为器械时，L 列逐行填写当前产品名称；其他场景留空。用药方案固定输出 13 列，在“姓名”后依次增加“用户类型、来源任务ID、来源月份”，同一患者的逐药行重复三项来源字段。验证实际工作簿的来源元数据、列位置、术式、耗材和药物映射，不能只检查 payload。检查首段、中段、末段预览；任何 userid、来源字段、术式、耗材、药物映射、频次、时间、疗程或公式错误都必须修复后重跑。
 8. 仅在全部校验通过后，把两个最终 `.xlsx` 复制到用户期望的目录。默认输出到输入文件同级目录，文件名分别为 `用药提醒_<产品名称>.xlsx` 和 `用药方案_<产品名称>.xlsx`；发生任何情景补全或本次显式采用AI模拟时，两份文件名都加 `_模拟`。最终文件标题、正文、单元格、工作表名、批注及备注中不写“模拟”字样；AI模拟标记及假设仅留在内部 JSON 和文件名。临床注意事项正常保留，源确认时间不得表述为新方案批准时间。若已存在则附加时间戳，不覆盖。
 
 ## 不可放宽的规则

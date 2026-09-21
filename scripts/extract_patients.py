@@ -19,6 +19,18 @@ REMINDER_HEADERS = [
 ]
 REMINDER_SURGERY_HEADERS = REMINDER_HEADERS[:7] + ["手术名称"] + REMINDER_HEADERS[7:]
 REMINDER_CONSUMABLE_HEADERS = REMINDER_HEADERS[:7] + ["手术名称", "耗材名称"] + REMINDER_HEADERS[7:]
+SOURCE_METADATA_HEADERS = ["用户类型", "来源任务ID", "来源月份"]
+REMINDER_SOURCE_HEADERS = REMINDER_HEADERS[:7] + SOURCE_METADATA_HEADERS + REMINDER_HEADERS[7:]
+REMINDER_SOURCE_OUTPUT_HEADERS = (
+    REMINDER_HEADERS[:7]
+    + SOURCE_METADATA_HEADERS
+    + ["手术名称", "耗材名称"]
+    + REMINDER_HEADERS[7:]
+)
+REMINDER_INPUT_FORMATS = {
+    "medicationReminder13", "medicationReminder14", "medicationReminder15",
+    "medicationReminder16", "medicationReminder18",
+}
 
 
 def as_text(value):
@@ -73,8 +85,12 @@ def main():
         input_format = "medicationReminder14"
     elif headers == REMINDER_CONSUMABLE_HEADERS:
         input_format = "medicationReminder15"
+    elif headers == REMINDER_SOURCE_HEADERS:
+        input_format = "medicationReminder16"
+    elif headers == REMINDER_SOURCE_OUTPUT_HEADERS:
+        input_format = "medicationReminder18"
     else:
-        raise ValueError(f"第二行表头不符合18列源表或13/14/15列用药提醒契约：{headers}")
+        raise ValueError(f"第二行表头不符合18列源表或13/14/15/16/18列用药提醒契约：{headers}")
 
     patients = []
     seen = set()
@@ -119,11 +135,14 @@ def main():
             "age": age,
             "disease": disease,
             "allergyHistory": as_text(row["既往过敏史"]) or "无",
+            "userType": as_text(row.get("用户类型")),
+            "sourceTaskId": as_text(row.get("来源任务ID")),
+            "sourceMonth": as_text(row.get("来源月份")),
             "adverseEvent": as_text(row["本月是否发生不良反应（AE）"]) or "否",
             "adverseEventGrade": as_text(row.get("AE严重程度分级")),
             "patientTags": normalize_patient_tag(row.get("患者标签")),
         }
-        if input_format in {"medicationReminder13", "medicationReminder14", "medicationReminder15"}:
+        if input_format in REMINDER_INPUT_FORMATS:
             patient["sourceConfirmationTime"] = confirmation_time
             patient["confirmationTime"] = confirmation_time
         patients.append(patient)

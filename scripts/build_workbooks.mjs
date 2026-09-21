@@ -47,11 +47,12 @@ async function progress(message) {
 }
 
 const reminderHeaders = [
-  "序号", "患者唯一标识", "姓名", "性别", "年龄", "疾病", "既往过敏史", "手术名称", "耗材名称", "联合用药",
-  "用药方案确认时间", "用药方案", "用药周期", "方案链接", "本月是否发生不良反应（AE）",
+  "序号", "患者唯一标识", "姓名", "性别", "年龄", "疾病", "既往过敏史", "用户类型", "来源任务ID", "来源月份",
+  "手术名称", "耗材名称", "联合用药", "用药方案确认时间", "用药方案", "用药周期", "方案链接", "本月是否发生不良反应（AE）",
 ];
 const medicationHeaders = [
-  "序号", "患者唯一标识", "姓名", "药品名称", "规格", "每次用量", "用药频次", "用药时间", "疗程（天）", "注意事项",
+  "序号", "患者唯一标识", "姓名", "用户类型", "来源任务ID", "来源月份",
+  "药品名称", "规格", "每次用量", "用药频次", "用药时间", "疗程（天）", "注意事项",
 ];
 
 function assert(condition, message) {
@@ -159,7 +160,7 @@ await fs.mkdir(outputDir, { recursive: true });
 const reminderWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(reminderTemplatePath));
 await progress("reminder template imported");
 const reminderSheet = reminderWorkbook.worksheets.getItemAt(0);
-assert(JSON.stringify(reminderSheet.getRange("A2:O2").values[0].map((value) => String(value ?? "").trim())) === JSON.stringify(reminderHeaders), "用药提醒模板表头不匹配");
+assert(JSON.stringify(reminderSheet.getRange("A2:R2").values[0].map((value) => String(value ?? "").trim())) === JSON.stringify(reminderHeaders), "用药提醒模板表头不匹配");
 const reminderRows = patients.map((patient, index) => {
   const record = recordByUserid.get(patient.userid);
   return [
@@ -170,6 +171,9 @@ const reminderRows = patients.map((patient, index) => {
     patient.age,
     patient.disease,
     patient.allergyHistory,
+    patient.userType ?? "",
+    patient.sourceTaskId ?? "",
+    patient.sourceMonth ?? "",
     record.surgeryName,
     meta.consumableName,
     record.combinedMedication.join("、"),
@@ -182,12 +186,12 @@ const reminderRows = patients.map((patient, index) => {
 });
 await progress("reminder rows prepared");
 const reminderExistingRows = reminderSheet.getUsedRange(true).values.length;
-if (reminderExistingRows >= 3) reminderSheet.getRange(`A3:O${reminderExistingRows}`).clear({ applyTo: "contents" });
+if (reminderExistingRows >= 3) reminderSheet.getRange(`A3:R${reminderExistingRows}`).clear({ applyTo: "contents" });
 const titlePrefix = meta.monthLabel ? `${meta.monthLabel}-` : "";
 reminderSheet.getRange("A1").values = [[`${titlePrefix}${meta.productName}用药提醒服务明细`]];
 reminderSheet.getRangeByIndexes(2, 0, reminderRows.length, reminderHeaders.length).values = reminderRows;
 await progress("reminder values written");
-const reminderDataRange = reminderSheet.getRange(`A3:O${reminderRows.length + 2}`);
+const reminderDataRange = reminderSheet.getRange(`A3:R${reminderRows.length + 2}`);
 reminderDataRange.format = {
   font: { name: "Calibri", size: 11 },
   wrapText: true,
@@ -196,13 +200,14 @@ reminderDataRange.format = {
 };
 reminderSheet.getRange(`A3:A${reminderRows.length + 2}`).format.horizontalAlignment = "center";
 reminderSheet.getRange(`D3:E${reminderRows.length + 2}`).format.horizontalAlignment = "center";
-reminderSheet.getRange(`K3:K${reminderRows.length + 2}`).format.horizontalAlignment = "center";
-reminderSheet.getRange(`M3:O${reminderRows.length + 2}`).format.horizontalAlignment = "center";
-reminderSheet.getRange(`A3:O${reminderRows.length + 2}`).format.rowHeight = 72;
-const reminderWidths = [8, 34, 12, 8, 8, 18, 20, 36, 24, 24, 22, 68, 12, 18, 30];
+reminderSheet.getRange(`H3:J${reminderRows.length + 2}`).format.horizontalAlignment = "center";
+reminderSheet.getRange(`N3:N${reminderRows.length + 2}`).format.horizontalAlignment = "center";
+reminderSheet.getRange(`P3:R${reminderRows.length + 2}`).format.horizontalAlignment = "center";
+reminderSheet.getRange(`A3:R${reminderRows.length + 2}`).format.rowHeight = 72;
+const reminderWidths = [8, 34, 12, 8, 8, 18, 20, 14, 16, 14, 36, 24, 24, 22, 68, 12, 18, 30];
 reminderWidths.forEach((width, index) => reminderSheet.getRange(`${columnName(index + 1)}:${columnName(index + 1)}`).format.columnWidth = width);
 for (const table of [...(reminderSheet.tables.items ?? [])]) table.delete();
-const reminderTable = reminderSheet.tables.add(`A2:O${reminderRows.length + 2}`, true, "MedicationReminderTable");
+const reminderTable = reminderSheet.tables.add(`A2:R${reminderRows.length + 2}`, true, "MedicationReminderTable");
 reminderTable.style = "TableStyleMedium2";
 reminderSheet.freezePanes.freezeRows(2);
 reminderSheet.showGridLines = false;
@@ -215,13 +220,16 @@ await progress("reminder exported");
 const medicationWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(medicationTemplatePath));
 await progress("medication template imported");
 const medicationSheet = medicationWorkbook.worksheets.getItemAt(0);
-assert(JSON.stringify(medicationSheet.getRange("A2:J2").values[0].map((value) => String(value ?? "").trim())) === JSON.stringify(medicationHeaders), "用药方案模板表头不匹配");
+assert(JSON.stringify(medicationSheet.getRange("A2:M2").values[0].map((value) => String(value ?? "").trim())) === JSON.stringify(medicationHeaders), "用药方案模板表头不匹配");
 const medicationRows = medicationItems.map((item, index) => {
   const patient = patientByUserid.get(item.userid);
   return [
     index + 1,
     item.userid,
     patient.patientName,
+    patient.userType ?? "",
+    patient.sourceTaskId ?? "",
+    patient.sourceMonth ?? "",
     item.drugName,
     item.specification,
     item.singleDose,
@@ -233,18 +241,18 @@ const medicationRows = medicationItems.map((item, index) => {
 });
 await progress("medication rows prepared");
 const medicationExistingRows = medicationSheet.getUsedRange(true).values.length;
-if (medicationExistingRows >= 3) medicationSheet.getRange(`A3:J${medicationExistingRows}`).clear({ applyTo: "contents" });
+if (medicationExistingRows >= 3) medicationSheet.getRange(`A3:M${medicationExistingRows}`).clear({ applyTo: "contents" });
 medicationSheet.getRange("A1").values = [[`${titlePrefix}${meta.productName}用药方案`]];
 await writeRowsInChunks(medicationSheet, 2, medicationRows, medicationHeaders.length, "medication");
 await progress("medication values written");
-await formatRowsInChunks(medicationSheet, 3, medicationRows.length, "J", "medication", 96);
+await formatRowsInChunks(medicationSheet, 3, medicationRows.length, "M", "medication", 96);
 medicationSheet.getRange(`A3:A${medicationRows.length + 2}`).format.horizontalAlignment = "center";
-medicationSheet.getRange(`D3:I${medicationRows.length + 2}`).format.horizontalAlignment = "center";
-const medicationWidths = [8, 34, 12, 22, 18, 16, 14, 14, 12, 90];
+medicationSheet.getRange(`D3:L${medicationRows.length + 2}`).format.horizontalAlignment = "center";
+const medicationWidths = [8, 34, 12, 14, 16, 14, 22, 18, 16, 14, 14, 12, 90];
 medicationWidths.forEach((width, index) => medicationSheet.getRange(`${columnName(index + 1)}:${columnName(index + 1)}`).format.columnWidth = width);
-medicationSheet.getRange(`I3:I${medicationRows.length + 2}`).format.numberFormat = "0";
+medicationSheet.getRange(`L3:L${medicationRows.length + 2}`).format.numberFormat = "0";
 for (const table of [...(medicationSheet.tables.items ?? [])]) table.delete();
-const medicationTable = medicationSheet.tables.add(`A2:J${medicationRows.length + 2}`, true, "MedicationListTable");
+const medicationTable = medicationSheet.tables.add(`A2:M${medicationRows.length + 2}`, true, "MedicationListTable");
 medicationTable.style = "TableStyleMedium2";
 medicationSheet.freezePanes.freezeRows(2);
 medicationSheet.showGridLines = false;
@@ -258,12 +266,12 @@ const reminderLastRow = reminderRows.length + 2;
 const medicationLastRow = medicationRows.length + 2;
 const reminderMiddle = Math.floor(reminderLastRow / 2);
 const medicationMiddle = Math.floor(medicationLastRow / 2);
-await savePreview(reminderWorkbook, reminderSheet, `A1:O${Math.min(10, reminderLastRow)}`, "reminder-first.png");
-await savePreview(reminderWorkbook, reminderSheet, `A${Math.max(3, reminderMiddle - 3)}:O${Math.min(reminderLastRow, reminderMiddle + 3)}`, "reminder-middle.png");
-await savePreview(reminderWorkbook, reminderSheet, `A${Math.max(3, reminderLastRow - 6)}:O${reminderLastRow}`, "reminder-last.png");
-await savePreview(medicationWorkbook, medicationSheet, "A1:J10", "medication-first.png");
-await savePreview(medicationWorkbook, medicationSheet, `A${Math.max(3, medicationMiddle - 3)}:J${Math.min(medicationLastRow, medicationMiddle + 3)}`, "medication-middle.png");
-await savePreview(medicationWorkbook, medicationSheet, `A${Math.max(3, medicationLastRow - 6)}:J${medicationLastRow}`, "medication-last.png");
+await savePreview(reminderWorkbook, reminderSheet, `A1:R${Math.min(10, reminderLastRow)}`, "reminder-first.png");
+await savePreview(reminderWorkbook, reminderSheet, `A${Math.max(3, reminderMiddle - 3)}:R${Math.min(reminderLastRow, reminderMiddle + 3)}`, "reminder-middle.png");
+await savePreview(reminderWorkbook, reminderSheet, `A${Math.max(3, reminderLastRow - 6)}:R${reminderLastRow}`, "reminder-last.png");
+await savePreview(medicationWorkbook, medicationSheet, "A1:M10", "medication-first.png");
+await savePreview(medicationWorkbook, medicationSheet, `A${Math.max(3, medicationMiddle - 3)}:M${Math.min(medicationLastRow, medicationMiddle + 3)}`, "medication-middle.png");
+await savePreview(medicationWorkbook, medicationSheet, `A${Math.max(3, medicationLastRow - 6)}:M${medicationLastRow}`, "medication-last.png");
 await progress("previews saved");
 
 const reminderErrors = await reminderWorkbook.inspect({
@@ -289,7 +297,8 @@ const qc = {
   medicationRows: medicationRows.length,
   productName: meta.productName,
   companyName: meta.companyName,
-  consumableNameValid: reminderRows.every((row) => String(row[8] ?? "") === meta.consumableName),
+  sourceMetadataValid: reminderRows.every((row, index) => [row[7], row[8], row[9]].map(value => String(value ?? "")).join("\u0000") === [patients[index].userType, patients[index].sourceTaskId, patients[index].sourceMonth].map(value => String(value ?? "")).join("\u0000")),
+  consumableNameValid: reminderRows.every((row) => String(row[11] ?? "") === meta.consumableName),
   surgeryNameValid: meta.productType === "用药" ? records.every((record) => record.surgeryName === "") : records.every((record) => record.surgeryName),
   productIncludedFirst: meta.productType === "用药" ? records.every((record) => record.combinedMedication[0] === meta.productName) : null,
   medicationListMatchesCombinedMedication: records.every((record) => JSON.stringify((itemsByUserid.get(record.userid) ?? []).map((item) => item.drugName)) === JSON.stringify(record.combinedMedication)),

@@ -102,6 +102,36 @@ class ExtractPatientsTest(unittest.TestCase):
         self.assertEqual(payload["patients"][0]["sourceConfirmationTime"], "2026-08-26 16:16:07")
         self.assertNotIn("consumableName", payload["patients"][0])
 
+    def test_accepts_sixteen_column_reminder_with_source_metadata(self):
+        headers = REMINDER_HEADERS[:7] + ["用户类型", "来源任务ID", "来源月份"] + REMINDER_HEADERS[7:]
+        row = [1, "u-source", "来源患者", "女", 42, "腹腔粘连", "无",
+               "续订用户", 16, "2026-08", "旧药", "2026-09-09 11:25:02",
+               "旧方案", "1天", "", "否"]
+
+        result, payload = self.run_extractor(headers, [row])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["inputFormat"], "medicationReminder16")
+        patient = payload["patients"][0]
+        self.assertEqual(patient["userType"], "续订用户")
+        self.assertEqual(patient["sourceTaskId"], "16")
+        self.assertEqual(patient["sourceMonth"], "2026-08")
+        self.assertEqual(patient["sourceConfirmationTime"], "2026-09-09 11:25:02")
+
+    def test_accepts_eighteen_column_generated_reminder_roundtrip(self):
+        headers = REMINDER_HEADERS[:7] + ["用户类型", "来源任务ID", "来源月份", "手术名称", "耗材名称"] + REMINDER_HEADERS[7:]
+        row = [1, "u-roundtrip", "回读患者", "男", 51, "粘连性肠梗阻", "无",
+               "新用户", "", "", "粘连松解术", "赛必妥", "药A、药B、药C",
+               "2026-09-10 12:00:00", "方案", "1天", "", "否"]
+
+        result, payload = self.run_extractor(headers, [row])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["inputFormat"], "medicationReminder18")
+        patient = payload["patients"][0]
+        self.assertEqual((patient["userType"], patient["sourceTaskId"], patient["sourceMonth"]),
+                         ("新用户", "", ""))
+
     def test_keeps_existing_eighteen_column_contract(self):
         headers = [
             "序号", "患者唯一标识", "姓名", "激活日期", "性别", "年龄", "联系电话", "所属地区",

@@ -1,5 +1,7 @@
 import unittest
 from pathlib import Path
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
@@ -12,6 +14,8 @@ class SkillContractTest(unittest.TestCase):
         cls.contract = (SKILL_DIR / "references" / "input-output-contract.md").read_text(encoding="utf-8")
         cls.clinical_rules = (SKILL_DIR / "references" / "clinical-generation-rules.md").read_text(encoding="utf-8")
         cls.rules = (SKILL_DIR / "references" / "adverse-reaction-generation-rules.md").read_text(encoding="utf-8")
+        cls.interview_workflow = (SKILL_DIR / "references" / "patient-interview-workflow.md").read_text(encoding="utf-8")
+        cls.interview_contract = (SKILL_DIR / "references" / "deep-interview-template-contract.md").read_text(encoding="utf-8")
         cls.agent = (SKILL_DIR / "agents" / "openai.yaml").read_text(encoding="utf-8")
 
     def test_description_triggers_adverse_reaction_workflow(self):
@@ -20,7 +24,39 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.20.0"', frontmatter)
+        self.assertIn('version: "1.22.0"', frontmatter)
+
+    def test_documents_source_metadata_input_and_output_columns(self):
+        for document in [self.skill, self.contract]:
+            for expected in ["用户类型", "来源任务ID", "来源月份", "medicationReminder16", "medicationReminder18"]:
+                self.assertIn(expected, document)
+            self.assertIn("用药提醒固定输出 18 列", document)
+            self.assertIn("用药方案固定输出 13 列", document)
+            self.assertIn("空值保持为空", document)
+
+    def test_interview_records_title_and_overview_exclude_product_name(self):
+        for document in [self.skill, self.interview_workflow, self.interview_contract]:
+            self.assertIn("主标题固定为“患者访谈记录明细”", document)
+            self.assertIn("调研对象概述", document)
+            self.assertIn("不得包含产品名称", document)
+            self.assertIn("本次调研访谈14位发生中度不良反应的患者", document)
+        self.assertIn("<产品>_患者访谈记录明细_<YYYY-MM>", self.interview_workflow)
+        self.assertIn("<产品>_患者访谈记录明细_<YYYY-MM>", self.interview_contract)
+
+        template = SKILL_DIR / "assets" / "patient-interview-records-template.docx"
+        with ZipFile(template) as archive:
+            root = ElementTree.fromstring(archive.read("word/document.xml"))
+        namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        paragraphs = [
+            "".join(node.text or "" for node in paragraph.findall(".//w:t", namespace)).strip()
+            for paragraph in root.findall(".//w:body/w:p", namespace)
+        ]
+        paragraphs = [text for text in paragraphs if text]
+        self.assertEqual(paragraphs[0], "患者访谈记录明细")
+        overview_index = paragraphs.index("一、调研对象概述")
+        overview = paragraphs[overview_index + 1]
+        self.assertNotIn("腔内连发施夹器", overview)
+        self.assertNotIn("均使用了", overview)
 
     def test_documents_special_company_consumable_rules(self):
         for document in [self.skill, self.contract, self.clinical_rules]:

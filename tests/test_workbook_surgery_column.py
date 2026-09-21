@@ -37,9 +37,11 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     for p in people:
                         p["activateTime"] = ""
                         p["sourceConfirmationTime"] = "2026-04-10 12:00:00"
+                    people[0].update(userType="续订用户", sourceTaskId="16", sourceMonth="2026-03")
+                    people[1].update(userType="新用户", sourceTaskId="", sourceMonth="")
                     people[1]["adverseEvent"] = "是"
                     data = extracted(people)
-                    data["inputFormat"] = "medicationReminder14"
+                    data["inputFormat"] = "medicationReminder16"
                     plans = [disease_plan(d, [d], [group("组", [medication("测试候选药")])],
                                           minimum_combined=1, minimum_disease=0,
                                           count_rationale="仅测试格式映射，非临床方案")
@@ -73,23 +75,38 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     self.run_script("verify_workbooks.mjs", *verify_args)
                     workbook = openpyxl.load_workbook(reminder, data_only=True)
                     sheet = workbook.active
-                    self.assertEqual(sheet.max_column, 15)
+                    self.assertEqual(sheet.max_column, 18)
                     self.assertFalse(any('模拟' in str(cell.value or '') for row in sheet for cell in row))
-                    self.assertEqual([sheet.cell(2, c).value for c in (7, 8, 9, 10)], ["既往过敏史", "手术名称", "耗材名称", "联合用药"])
-                    self.assertEqual([sheet.cell(r, 8).value or "" for r in (3, 4)],
+                    self.assertEqual([sheet.cell(2, c).value for c in range(7, 14)],
+                                     ["既往过敏史", "用户类型", "来源任务ID", "来源月份", "手术名称", "耗材名称", "联合用药"])
+                    self.assertEqual([sheet.cell(r, 8).value or "" for r in (3, 4)], ["续订用户", "新用户"])
+                    self.assertEqual([sheet.cell(r, 9).value or "" for r in (3, 4)], ["16", ""])
+                    self.assertEqual([sheet.cell(r, 10).value or "" for r in (3, 4)], ["2026-03", ""])
+                    self.assertEqual([sheet.cell(r, 11).value or "" for r in (3, 4)],
                                      ["测试甲术式", "测试乙术式"] if product_type == "器械" else ["", ""])
-                    self.assertEqual([sheet.cell(r, 9).value or "" for r in (3, 4)],
+                    self.assertEqual([sheet.cell(r, 12).value or "" for r in (3, 4)],
                                      ["测试产品", "测试产品"] if product_type == "器械" else ["", ""])
-                    self.assertEqual(sheet["O4"].value, "是")
-                    self.assertEqual(sheet["K3"].value, "2026-04-10 12:00:00")
-                    self.assertIn("A1:O1", {str(r) for r in sheet.merged_cells.ranges})
-                    self.assertEqual(next(iter(sheet.tables.values())).ref, "A2:O4")
+                    self.assertEqual(sheet["R4"].value, "是")
+                    self.assertEqual(sheet["N3"].value, "2026-04-10 12:00:00")
+                    self.assertIn("A1:R1", {str(r) for r in sheet.merged_cells.ranges})
+                    self.assertEqual(next(iter(sheet.tables.values())).ref, "A2:R4")
                     workbook.close()
+                    medication_book = openpyxl.load_workbook(meds, data_only=True)
+                    medication_sheet = medication_book.active
+                    self.assertEqual(medication_sheet.max_column, 13)
+                    self.assertEqual([medication_sheet.cell(2, c).value for c in range(3, 8)],
+                                     ["姓名", "用户类型", "来源任务ID", "来源月份", "药品名称"])
+                    medication_rows = list(medication_sheet.iter_rows(min_row=3, values_only=True))
+                    self.assertTrue(all(row[3] == ("续订用户" if row[1] == "test-a" else "新用户") for row in medication_rows))
+                    self.assertTrue(all(str(row[4] or "") == ("16" if row[1] == "test-a" else "") for row in medication_rows))
+                    self.assertTrue(all(str(row[5] or "") == ("2026-03" if row[1] == "test-a" else "") for row in medication_rows))
+                    medication_book.close()
                     self.run_script("extract_patients.py", "--source", reminder, "--output", folder / "roundtrip.json")
                     roundtrip = json.loads((folder / "roundtrip.json").read_text())
-                    self.assertEqual(roundtrip["inputFormat"], "medicationReminder15")
+                    self.assertEqual(roundtrip["inputFormat"], "medicationReminder18")
                     self.assertEqual([p["userid"] for p in roundtrip["patients"]], ["test-a", "test-b"])
                     self.assertEqual(roundtrip["patients"][0]["sourceConfirmationTime"], "2026-04-10 12:00:00")
+                    self.assertEqual(roundtrip["patients"][0]["sourceTaskId"], "16")
                     if os.environ.get("WORKBOOK_TEST_ARTIFACTS"):
                         destination = Path(os.environ["WORKBOOK_TEST_ARTIFACTS"]) / product_type
                         destination.mkdir(parents=True, exist_ok=True)
@@ -104,9 +121,9 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                             if info.filename == "xl/worksheets/sheet1.xml":
                                 xml = ET.fromstring(content)
                                 row = xml.find(f"{ns}sheetData/{ns}row[@r='3']")
-                                cell = row.find(f"{ns}c[@r='H3']")
+                                cell = row.find(f"{ns}c[@r='K3']")
                                 if cell is None:
-                                    cell = ET.SubElement(row, f"{ns}c", {"r": "H3"})
+                                    cell = ET.SubElement(row, f"{ns}c", {"r": "K3"})
                                 for child in list(cell):
                                     cell.remove(child)
                                 cell.set("t", "inlineStr")
@@ -117,3 +134,24 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     result = self.run_script("verify_workbooks.mjs", *verify_args, success=False)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("手术名称与生成记录不一致", result.stderr)
+
+                    metadata_corrupted = folder / "metadata-corrupted.xlsx"
+                    with zipfile.ZipFile(reminder) as source, zipfile.ZipFile(metadata_corrupted, "w") as dest:
+                        for info in source.infolist():
+                            content = source.read(info.filename)
+                            if info.filename == "xl/worksheets/sheet1.xml":
+                                xml = ET.fromstring(content)
+                                row = xml.find(f"{ns}sheetData/{ns}row[@r='3']")
+                                cell = row.find(f"{ns}c[@r='H3']")
+                                if cell is None:
+                                    cell = ET.SubElement(row, f"{ns}c", {"r": "H3"})
+                                for child in list(cell):
+                                    cell.remove(child)
+                                cell.set("t", "inlineStr")
+                                ET.SubElement(ET.SubElement(cell, f"{ns}is"), f"{ns}t").text = "错误用户类型"
+                                content = ET.tostring(xml, encoding="utf-8", xml_declaration=True)
+                            dest.writestr(info, content)
+                    verify_args[3] = metadata_corrupted
+                    result = self.run_script("verify_workbooks.mjs", *verify_args, success=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("来源元数据与患者记录不一致", result.stderr)
