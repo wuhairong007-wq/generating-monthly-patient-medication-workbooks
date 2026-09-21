@@ -54,7 +54,7 @@ def build_monthly_metrics(data, product, start, end):
         'averageDrugsPerPatient': round(drug_entries/n, 2),
         'drugDistribution': [{'label': name, 'count': count} for name, count in drugs.most_common()],
         'combinationCountDistribution': [{'label': str(k), 'count': v} for k,v in sorted(combination_counts.items())],
-        'combinationModeDistribution': [{'label': k, 'count': v} for k,v in plan_combinations.most_common(12)],
+        'combinationModeDistribution': [{'label': k, 'count': v} for k,v in plan_combinations.most_common()],
         'productSpecificationDistribution': [], 'productFrequencyDistribution': [], 'productCourseDistribution': [],
         'planCycleDistribution': [{'label': k, 'count': v} for k,v in Counter(clean(row.get('用药周期')) or '无记录' for row in plans).most_common()],
         'productPatientCount': drugs.get(product, 0),

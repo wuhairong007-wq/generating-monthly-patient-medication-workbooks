@@ -55,6 +55,36 @@ class MonthlyInsightTest(unittest.TestCase):
         self.assertEqual(m['medications']['productSpecificationDistribution'],[])
         self.assertEqual(report['sourceDiagnostics']['roles']['followups']['unmatchedRows'],1)
 
+    def test_monthly_combination_distribution_keeps_all_registered_modes(self):
+        identity = ['患者唯一标识', '性别', '年龄', '所属地区', '疾病']
+        patients = [[f'{index:03d}', '女', 40, '江苏', '疾病甲', 1] for index in range(1, 14)]
+        reminders = [
+            [f'{index:03d}', '女', 40, '疾病甲', f'产品甲、药品{index:02d}',
+             '2026-04-09', f'产品甲1粒、药品{index:02d}10mg', '21天']
+            for index in range(1, 14)
+        ]
+        write_book(self.root/'patients.xlsx', identity + ['AI用药提醒次数'], patients,
+                   '2026年04月-月度患者服务清单')
+        write_book(self.root/'reminders.xlsx',
+                   ['患者唯一标识','性别','年龄','疾病','联合用药','用药方案确认时间','用药方案','用药周期'],
+                   reminders)
+
+        insight = self.insight()
+        combinations = insight['metrics']['medications']['combinationModeDistribution']
+
+        self.assertEqual(len(combinations), 13)
+        self.assertEqual(sum(item['count'] for item in combinations), 13)
+        self.assertEqual(combinations[-1], {'label': '产品甲 + 药品13', 'count': 1})
+        payload = self.root/'all-combinations-insight.json'
+        payload.write_text(json.dumps(insight, ensure_ascii=False))
+        manifest = generate_charts(insight, self.root/'all-combinations-charts')
+        output = self.root/'all-combinations-report.docx'
+        build_report(payload, manifest, None, output)
+        cells = '\n'.join(
+            cell.text for table in Document(output).tables for row in table.rows for cell in row.cells
+        )
+        self.assertIn('产品甲 + 药品13', cells)
+
     def test_mismatched_period_does_not_reuse_monthly_summary(self):
         report=self.insight(start='2026-09-01',end='2026-09-30')
         self.assertIsNone(report['metrics']['serviceExecution']['medicationReminders'])

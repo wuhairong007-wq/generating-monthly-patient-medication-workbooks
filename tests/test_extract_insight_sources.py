@@ -54,6 +54,26 @@ class ExtractInsightSourcesTest(unittest.TestCase):
         self.assertEqual(insight["metrics"]["symptoms"]["dimensionMeans"], [2.0] * 6)
         self.assertEqual(insight["metrics"]["adverseEventRate"]["numerator"], 1)
 
+    def test_combination_distribution_keeps_all_modes(self):
+        root = Path(self.temp_dir.name)
+        patients = [[index, f"P{index:03d}", "女", 42, "湖北省武汉市", "软组织血肿"] for index in range(1, 14)]
+        medications = []
+        for index in range(1, 14):
+            patient_id = f"P{index:03d}"
+            medications.extend([
+                [patient_id, "2026-07-01", "注射用胰蛋白酶", "2.5万单位", "每日1次", 3],
+                [patient_id, "2026-07-01", f"辅助药{index:02d}", "10mg", "每日1次", 3],
+            ])
+        write_book(root / "patients.xlsx", ["序号", "userid", "性别", "年龄", "地区", "疾病"], patients, "患者全病程数据")
+        write_book(root / "medications.xlsx", ["userid", "用药方案确认时间", "药品名称", "规格", "用药频率", "疗程天数"], medications)
+
+        insight = build_insight(self.paths, "注射用胰蛋白酶", "2026-07-01", "2026-07-31")
+        combinations = insight["metrics"]["medications"]["combinationModeDistribution"]
+
+        self.assertEqual(len(combinations), 13)
+        self.assertEqual(sum(item["count"] for item in combinations), 13)
+        self.assertIn({"label": "注射用胰蛋白酶 + 辅助药13", "count": 1}, combinations)
+
     def test_optional_adverse_events_are_not_treated_as_zero_events(self):
         paths = [path for path in self.paths if not path.endswith("ae.xlsx")]
         insight = build_insight(paths, "注射用胰蛋白酶", "2026-07-01", "2026-07-31")

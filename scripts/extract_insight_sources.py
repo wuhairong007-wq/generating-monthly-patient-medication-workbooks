@@ -346,7 +346,7 @@ def build_metrics(data, product):
             "productSpecificationDistribution": distribution(record.get("规格") for record in product_records),
             "productFrequencyDistribution": distribution(record.get("用药频率") for record in product_records),
             "productCourseDistribution": distribution(record.get("疗程天数") for record in product_records),
-            "combinationModeDistribution": [{"label": label, "count": count} for label, count in combination_modes.most_common(12)],
+            "combinationModeDistribution": [{"label": label, "count": count} for label, count in combination_modes.most_common()],
         },
         "adverseEventRate": ratio(len(adverse_ids), patient_count) if adverse_events_provided else None,
         "adverseEvents": {

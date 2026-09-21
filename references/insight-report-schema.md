@@ -14,6 +14,6 @@
 
 `metrics.monthlySummary`保存`sourceMonth`、`matchesPeriod`和`sourceReminderTotal`。只有主表标题月份与请求完整自然月一致且各行提醒次数合法时，`serviceExecution.medicationReminders/totalPrompts`才采用源汇总，否则为`null`。不将其他月份计数移入请求周期。
 
-`reminderPlanCoverage`按周期内确认方案的唯一患者数/主表人数计算；`medications.drugDistribution`来自明确的联合用药药名，按患者药名去重；`combinationModeDistribution`按登记记录计数；`planCycleDistribution`直接来自用药周期字段。规格、频次、逐药疗程分布为空，不能从叙述推导。
+`reminderPlanCoverage`按周期内确认方案的唯一患者数/主表人数计算；`medications.drugDistribution`来自明确的联合用药药名，按患者药名去重；`combinationModeDistribution`按登记记录计数并保留全部组合，不设置数量上限，报告表格必须完整列出；组合图表为保持可读性仅展示高频前8种；`planCycleDistribution`直接来自用药周期字段。规格、频次、逐药疗程分布为空，不能从叙述推导。
 
 `healthPlanCoverage`、响应率、体温和血压心率监测等无对应输入的指标为`null`，报告与图表不得将其转成零或推测值。疾病/年龄模块覆盖只含用药方案登记、智能随访、症状自评。随访`positiveRate`键为兼容中间格式保留，但月度语义仅为A/B选项占比，按实际题目解释。无完整自评答卷时均值不可用，不绘制零分雷达图。

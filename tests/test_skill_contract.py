@@ -24,7 +24,15 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.22.0"', frontmatter)
+        self.assertIn('version: "1.22.2"', frontmatter)
+
+    def test_insight_metrics_keep_all_combination_modes(self):
+        schema = (SKILL_DIR / "references" / "insight-report-schema.md").read_text(encoding="utf-8")
+        base_metrics = (SKILL_DIR / "scripts" / "extract_insight_sources.py").read_text(encoding="utf-8")
+        monthly_metrics = (SKILL_DIR / "scripts" / "monthly_insight_metrics.py").read_text(encoding="utf-8")
+        self.assertIn("combinationModeDistribution`按登记记录计数并保留全部组合", schema)
+        self.assertNotIn("most_common(12)", base_metrics)
+        self.assertNotIn("most_common(12)", monthly_metrics)
 
     def test_documents_source_metadata_input_and_output_columns(self):
         for document in [self.skill, self.contract]:

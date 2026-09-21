@@ -117,7 +117,7 @@ def build_monthly_report(insight, chart_manifest_path, template_path, output_pat
          '建议对常见组合核对原始处方及变更时间，对名称不一致的条目先建立经确认的别名映射。高频登记组合可用于安排药师复核，不能直接证明联合用药的有效性或安全性。')
     table(['登记药名','对应患者数'], [[x['label'],x['count']] for x in m['medications']['drugDistribution']], '登记药名患者分布')
     chart('medications')
-    table(['登记组合','方案记录数'], [[x['label'],x['count']] for x in m['medications']['combinationModeDistribution']], '常见方案组合')
+    table(['登记组合','方案记录数'], [[x['label'],x['count']] for x in m['medications']['combinationModeDistribution']], '全部登记方案组合')
     chart('combination-modes')
     heading(4)
     sub('（一）随访概况')
