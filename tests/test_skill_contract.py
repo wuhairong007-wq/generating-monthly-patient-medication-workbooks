@@ -24,7 +24,7 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.22.2"', frontmatter)
+        self.assertIn('version: "1.22.3"', frontmatter)
 
     def test_insight_metrics_keep_all_combination_modes(self):
         schema = (SKILL_DIR / "references" / "insight-report-schema.md").read_text(encoding="utf-8")
@@ -65,6 +65,51 @@ class SkillContractTest(unittest.TestCase):
         overview = paragraphs[overview_index + 1]
         self.assertNotIn("腔内连发施夹器", overview)
         self.assertNotIn("均使用了", overview)
+
+    def test_deep_interview_overview_tables_start_with_sequence_and_name(self):
+        for document in [self.skill, self.interview_workflow, self.interview_contract]:
+            self.assertIn("首列", document)
+            self.assertIn("“序号”", document)
+            self.assertIn("第二列", document)
+            self.assertIn("“姓名”", document)
+            self.assertIn("selectedPatients", document)
+            self.assertIn("从 1 连续", document)
+
+        for template_name, expected_columns in [
+            ("patient-interview-analysis-template.docx", 5),
+            ("patient-interview-records-template.docx", 8),
+        ]:
+            template = SKILL_DIR / "assets" / template_name
+            with ZipFile(template) as archive:
+                root = ElementTree.fromstring(archive.read("word/document.xml"))
+            namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+            table = root.find(".//w:tbl", namespace)
+            rows = table.findall("./w:tr", namespace)
+            headers = [
+                "".join(node.text or "" for node in cell.findall(".//w:t", namespace)).strip()
+                for cell in rows[0].findall("./w:tc", namespace)
+            ]
+            self.assertEqual(len(headers), expected_columns)
+            self.assertEqual(headers[:2], ["序号", "姓名"])
+            sequences = [
+                "".join(node.text or "" for node in row.findall("./w:tc", namespace)[0].findall(".//w:t", namespace)).strip()
+                for row in rows[1:]
+            ]
+            self.assertEqual(sequences, [str(index) for index in range(1, len(rows))])
+
+        records_template = SKILL_DIR / "assets" / "patient-interview-records-template.docx"
+        with ZipFile(records_template) as archive:
+            root = ElementTree.fromstring(archive.read("word/document.xml"))
+        namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        tables = root.findall(".//w:tbl", namespace)
+        self.assertGreater(len(tables), 1)
+        for table in tables[1:]:
+            grid_columns = table.findall("./w:tblGrid/w:gridCol", namespace)
+            self.assertEqual(len(grid_columns), 2)
+            content_rows = table.findall("./w:tr", namespace)[1:]
+            self.assertTrue(content_rows)
+            for row in content_rows:
+                self.assertEqual(len(row.findall("./w:tc", namespace)), 2)
 
     def test_documents_special_company_consumable_rules(self):
         for document in [self.skill, self.contract, self.clinical_rules]:

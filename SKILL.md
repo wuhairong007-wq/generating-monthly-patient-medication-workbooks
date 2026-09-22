@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks, or asks 生成洞察报告、生成患者调研访谈、生成深度访谈 from service Excel files to create Word reports. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.22.2"
+  version: "1.22.3"
 ---
 
 # 生成月度患者用药清单
@@ -19,7 +19,7 @@ metadata:
 - `生成患者调研访谈` 或兼容指令 `生成深度访谈`：执行 [references/patient-interview-workflow.md](references/patient-interview-workflow.md)。需要调研时间、调研数量，以及月度患者清单、患者随访、症状自评、用药提醒、不良反应清单五表，兼容原六表组合。`调研方式` 默认为深度访谈；电话随访输出1份明细 Word，深度访谈输出分析和明细共2份 Word。默认已授权AI模拟访谈，无需人工确认，直接生成完整问答和对应分析，不因缺少真实访谈原文退回提纲。模拟文件名含“模拟”，交付时说明情景性质；用户明确要求真实访谈或仅提纲时按该要求执行。
 - 患者访谈记录明细 Word 的主标题固定为“患者访谈记录明细”，不得添加产品名称；“一、调研对象概述”的总体样本文案不得包含产品名称，不写“使用/应用/接受某产品”等措辞，按实际人数和严重程度写作，例如“本次调研访谈14位发生中度不良反应的患者”。交付文件名继续使用 `<产品>_患者访谈记录明细_<YYYY-MM>[_模拟].docx`，分析报告及逐人内容中必要的产品分析不受此限制。
 - 两项 Word 功能使用当前技能内置 DOCX 模板；洞察报告固定结构和访谈模板包克隆方式各自独立。生成 Word 时使用可用的 `documents:documents` 完成排版及视觉核验，或按参考流程直接调用可用的 `render_docx.py`；缺少渲染环境时如实记录未完成视觉核验。
-- 深度访谈使用对应患者姓名替代 P01、P02 等编号：两份报告的概况表表头改为“姓名”，逐人标题、正文及引语署名统一取主表姓名；完整患者ID继续保留用于核验。姓名映射与缺失处理见访谈流程。
+- 深度访谈两份报告的概况表首列固定为“序号”、第二列固定为“姓名”；序号按 `selectedPatients` 入选顺序从 1 连续编号，姓名取对应患者主表姓名。逐人标题、正文及引语署名继续使用姓名替代 P01、P02 等患者编号，完整患者ID保留用于核验；每位患者的逐人访谈表字段和两列结构不变。姓名映射与缺失处理见访谈流程。
 
 - 文案包含 `生成不良反应清单 依据文件：... 产品：... 服务周期：YYYY-MM-DD 至 YYYY-MM-DD` 时，执行下方“不良反应清单流程”；`产品` 和 `服务周期` 必填，不要求 `产品类型`。
 - 文案包含 `生成月度患者清单` 且提供公司、产品类型和产品名称时，执行原有用药/器械流程。
