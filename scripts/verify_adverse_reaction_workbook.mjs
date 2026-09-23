@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { validateAdverseReactionWording } from "./adverse_reaction_wording.mjs";
 
 const nodeModules = process.env.CODEX_NODE_MODULES;
 if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
@@ -160,7 +161,13 @@ for (let index = 0; index < rows.length; index += 1) {
   assert(String(row[8] ?? "") === record.treatmentOutcome, `${record.userid}转归与payload不一致`);
   assert(String(row[10] ?? "") === record.remark, `${record.userid}备注与payload不一致`);
   assert(!String(row[4] ?? "").includes(productName), `${record.userid}症状描述不得包含当前产品名称`);
-  assert(String(row[6] ?? "").includes(productName), `${record.userid}关系分析缺少产品名称`);
+  validateAdverseReactionWording({
+    userid: record.userid,
+    severityGrade: String(row[5] ?? ""),
+    symptomDescription: String(row[4] ?? ""),
+    medicationRelationship: String(row[6] ?? ""),
+    treatmentMeasures: String(row[7] ?? ""),
+  }, productName);
   assert(!String(row[4] ?? "").includes("草案"), `${record.userid}症状描述包含草案标签`);
   assert(!String(row[10] ?? "").includes("草案"), `${record.userid}备注包含草案标签`);
 }
@@ -189,6 +196,8 @@ const report = {
   productName,
   productAwareContent: true,
   symptomDescriptionsExcludeProductName: true,
+  mildNarrativesExcludeManualVerificationWording: true,
+  medicationRelationshipsExcludePromotedProduct: true,
   noDraftPrefixes: true,
   tableObjects: sheet.tables.items.length,
   formulaErrors: "matched 0 entries",

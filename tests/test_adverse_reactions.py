@@ -347,8 +347,9 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
         self.assertNotEqual(first["treatmentOutcome"], second["treatmentOutcome"])
         for record in payload["records"]:
             self.assertNotIn("血栓通胶囊", record["symptomDescription"])
-            self.assertIn("血栓通胶囊", record["medicationRelationship"])
-            self.assertIn("人工核实", record["medicationRelationship"])
+            self.assertNotIn("血栓通胶囊", record["medicationRelationship"])
+            self.assertNotIn("血栓通", record["medicationRelationship"])
+            self.assertIn("用药", record["medicationRelationship"])
             self.assertNotIn("结构化草案：", record["symptomDescription"])
             self.assertNotIn("人工审核草案：", record["remark"])
             self.assertNotIn("草案", record["symptomDescription"])
@@ -362,8 +363,35 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
             symptom_tail = record["symptomDescription"].split("反馈可能出现", 1)[1]
             selected_symptoms = "，".join(symptom_tail.split("，")[:2])
             self.assertIn(selected_symptoms, record["treatmentMeasures"])
-        self.assertIn("血栓通胶囊", first["treatmentOutcome"])
-        self.assertIn("血栓通胶囊", second["treatmentOutcome"])
+
+    def test_mild_records_do_not_use_manual_verification_wording(self):
+        result, payload = self.run_generator(
+            [
+                patient("mild", "轻度患者"),
+                patient("medium", "中度患者"),
+                patient("severe", "重度患者"),
+            ]
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        mild = next(record for record in payload["records"] if record["severityGrade"] == "轻度")
+        for field in ("symptomDescription", "medicationRelationship", "treatmentMeasures"):
+            self.assertNotRegex(mild[field], r"人工(?:核实|复核|确认|审核)")
+
+    def test_relationship_analysis_excludes_promoted_product_name_and_shorthand(self):
+        result, payload = self.run_generator(
+            [
+                patient("mild", "轻度患者"),
+                patient("medium", "中度患者"),
+                patient("severe", "重度患者"),
+            ],
+            product="注射用胰蛋白酶",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for record in payload["records"]:
+            self.assertNotIn("注射用胰蛋白酶", record["medicationRelationship"])
+            self.assertNotIn("胰蛋白酶", record["medicationRelationship"])
 
     def test_symptom_descriptions_exclude_product_information_for_all_target_tags(self):
         patients = [patient(f"u{index}", tag) for index, tag in enumerate(
@@ -382,7 +410,9 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
                     self.assertNotIn("双歧杆菌四联活菌片", description)
                     self.assertIn(source["disease"], description)
                     self.assertIn(f"{source['age']}岁", description)
-                    self.assertIn(product, record["medicationRelationship"])
+                    self.assertNotIn(product, record["medicationRelationship"])
+                    self.assertNotIn("思连康", record["medicationRelationship"])
+                    self.assertNotIn("双歧杆菌四联活菌片", record["medicationRelationship"])
                     descriptions.append(description)
                 descriptions_by_product.append(descriptions)
         self.assertTrue(all(items == descriptions_by_product[0] for items in descriptions_by_product))
@@ -435,7 +465,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
                 "discoveryMethod": "AI用药随访发现",
                 "symptomDescription": "患者反馈可能出现头晕或乏力，具体情况需人工核实。",
                 "severityGrade": "中度",
-                "medicationRelationship": "上述表现与血栓通胶囊存在时间关联的可能性，具体因果关系需人工核实。",
+                "medicationRelationship": "上述表现与用药时间可能存在先后关联，具体因果关系需人工核实。",
                 "treatmentMeasures": "建议人工复核症状和当前用药，必要时联系医师，不自行调整用药。",
                 "treatmentOutcome": "当前资料未提供处理后转归，需在后续随访中核实并记录。",
                 "manualIntervention": "否",
@@ -449,7 +479,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
                 "discoveryMethod": "患者自评反馈",
                 "symptomDescription": "患者反馈可能出现明显乏力或胃部不适，具体情况需人工核实。",
                 "severityGrade": "重度",
-                "medicationRelationship": "上述表现与血栓通胶囊存在时间关联的可能性，具体因果关系需人工核实。",
+                "medicationRelationship": "上述表现与用药时间可能存在先后关联，具体因果关系需人工核实。",
                 "treatmentMeasures": "建议尽快人工干预并复核当前用药，出现紧急情况及时就医，不自行调整用药。",
                 "treatmentOutcome": "当前资料未提供处理后转归，需在后续随访中核实并记录。",
                 "manualIntervention": "是",
@@ -507,7 +537,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             self.assertNotIn("草案", sheet["K3"].value)
             for row in (3, 4):
                 self.assertNotIn(payload["meta"]["productName"], sheet[f"E{row}"].value)
-                self.assertIn(payload["meta"]["productName"], sheet[f"G{row}"].value)
+                self.assertNotIn(payload["meta"]["productName"], sheet[f"G{row}"].value)
             headers = list(next(sheet.iter_rows(min_row=2, max_row=2, values_only=True)))
             self.assertEqual(len(headers), 11)
             self.assertNotIn("发现途径", headers)
@@ -545,8 +575,142 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             self.assertTrue(report["occurrenceTimesFollowActivation"])
             self.assertTrue(report["occurrenceTimesWithinServicePeriod"])
             self.assertTrue(report["occurrenceTimesMatchActivationPeriodRule"])
+            self.assertTrue(report["mildNarrativesExcludeManualVerificationWording"])
+            self.assertTrue(report["medicationRelationshipsExcludePromotedProduct"])
             self.assertEqual(report["servicePeriod"], payload["meta"]["servicePeriod"])
             self.assertTrue(report["formulaErrors"].endswith("matched 0 entries"))
+
+    def test_builder_rejects_mild_manual_wording_and_product_name_in_relationship(self):
+        source_patient = patient("mild-user", "轻度患者", disease="脑梗死")
+        base_record = {
+            "userid": "mild-user",
+            "disease": "脑梗死",
+            "occurrenceTime": "2026-04-11 12:00:00",
+            "discoveryMethod": "AI用药随访发现",
+            "symptomDescription": "患者反馈出现短暂头晕，建议记录持续时间。",
+            "severityGrade": "轻度",
+            "medicationRelationship": "上述表现与用药时间可能存在先后关联，现有信息不足以确认因果关系。",
+            "treatmentMeasures": "建议记录症状变化，必要时联系医师或药师评估。",
+            "treatmentOutcome": "当前资料未提供处理后转归，待后续随访观察并记录。",
+            "manualIntervention": "否",
+            "followupRecord": "",
+            "remark": "涉及产品的相关信息不构成诊断、处方调整或疗效结论。",
+        }
+        cases = [
+            ({"symptomDescription": "患者反馈头晕，具体情况需人工核实。"}, "轻度患者"),
+            ({"medicationRelationship": "上述表现与血栓通胶囊可能存在时间关联。"}, "推广产品"),
+            ({"treatmentMeasures": "建议人工复核症状和当前用药。"}, "轻度患者"),
+        ]
+
+        for mutation, expected_error in cases:
+            with self.subTest(mutation=mutation):
+                record = {**base_record, **mutation}
+                payload = {
+                    "meta": {
+                        "sourcePatientCount": 1,
+                        "targetPatientCount": 1,
+                        "targetTags": ["轻度患者"],
+                        "productName": "血栓通胶囊",
+                        "servicePeriod": {"start": "2026-04-11", "end": "2026-04-15"},
+                    },
+                    "sourcePatients": [source_patient],
+                    "records": [record],
+                }
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp = Path(temp_dir)
+                    payload_path = temp / "payload.json"
+                    payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                    build = subprocess.run(
+                        [
+                            NODE, str(BUILDER), "--payload", str(payload_path),
+                            "--template", str(TEMPLATE), "--output", str(temp / "output.xlsx"),
+                            "--preview-dir", str(temp / "previews"),
+                        ],
+                        env={**os.environ, "CODEX_NODE_MODULES": NODE_MODULES},
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertNotEqual(build.returncode, 0)
+                    self.assertIn(expected_error, build.stderr)
+
+    def test_verifier_rejects_product_name_in_relationship(self):
+        source_patient = patient("mild-user", "轻度患者", disease="脑梗死")
+        record = {
+            "userid": "mild-user",
+            "disease": "脑梗死",
+            "occurrenceTime": "2026-04-11 12:00:00",
+            "discoveryMethod": "AI用药随访发现",
+            "symptomDescription": "患者反馈出现短暂头晕，建议记录持续时间。",
+            "severityGrade": "轻度",
+            "medicationRelationship": "上述表现与用药时间可能存在先后关联，现有信息不足以确认因果关系。",
+            "treatmentMeasures": "建议记录症状变化，必要时联系医师或药师评估。",
+            "treatmentOutcome": "当前资料未提供处理后转归，待后续随访观察并记录。",
+            "manualIntervention": "否",
+            "followupRecord": "",
+            "remark": "相关信息不构成诊断、处方调整或疗效结论。",
+        }
+        payload = {
+            "meta": {
+                "sourcePatientCount": 1,
+                "targetPatientCount": 1,
+                "targetTags": ["轻度患者"],
+                "productName": "血栓通胶囊",
+                "servicePeriod": {"start": "2026-04-11", "end": "2026-04-15"},
+            },
+            "sourcePatients": [source_patient],
+            "records": [record],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            payload_path = temp / "payload.json"
+            workbook_path = temp / "output.xlsx"
+            report_path = temp / "verification.json"
+            payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            env = {**os.environ, "CODEX_NODE_MODULES": NODE_MODULES}
+            build = subprocess.run(
+                [
+                    NODE, str(BUILDER), "--payload", str(payload_path),
+                    "--template", str(TEMPLATE), "--output", str(workbook_path),
+                    "--preview-dir", str(temp / "previews"),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(build.returncode, 0, build.stderr)
+
+            invalid_relationship = "上述表现与血栓通胶囊可能存在时间关联。"
+            payload["records"][0]["medicationRelationship"] = invalid_relationship
+            payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            workbook = load_workbook(workbook_path)
+            workbook.worksheets[0]["G3"] = invalid_relationship
+            workbook.save(workbook_path)
+            workbook.close()
+
+            verify = subprocess.run(
+                [
+                    NODE, str(VERIFIER), "--payload", str(payload_path),
+                    "--workbook", str(workbook_path), "--report", str(report_path),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(verify.returncode, 0)
+            self.assertIn("推广产品", verify.stderr)
+
+            valid_relationship = "上述表现与用药时间可能存在先后关联，现有信息不足以确认因果关系。"
+            payload["records"][0]["medicationRelationship"] = valid_relationship
+            payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            workbook = load_workbook(workbook_path)
+            workbook.worksheets[0]["G3"] = valid_relationship
+            workbook.save(workbook_path)
+            workbook.close()
+            preview_dir = temp / "previews"
 
             contaminated = copy.deepcopy(payload)
             contaminated["records"][0]["symptomDescription"] += "涉及血栓通胶囊。"

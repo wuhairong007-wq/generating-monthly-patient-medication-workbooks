@@ -24,7 +24,7 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.22.3"', frontmatter)
+        self.assertIn('version: "1.22.4"', frontmatter)
 
     def test_insight_metrics_keep_all_combination_modes(self):
         schema = (SKILL_DIR / "references" / "insight-report-schema.md").read_text(encoding="utf-8")
@@ -263,6 +263,14 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn("症状描述不得包含当前产品信息", document)
             self.assertNotIn("症状描述和关系分析必须包含当前产品名称", document)
             self.assertNotIn("症状描述必须包含产品名称", document)
+
+    def test_adverse_reaction_wording_excludes_manual_review_for_mild_and_product_from_relationship(self):
+        for document in [self.skill, self.contract, self.rules]:
+            self.assertIn("轻度患者", document)
+            self.assertIn("人工核验措辞", document)
+            self.assertIn("关系分析不得包含当前推广产品", document)
+            self.assertIn("商品名", document)
+            self.assertIn("已知别名", document)
 
     def test_agent_metadata_mentions_adverse_reaction_workbook(self):
         self.assertIn("不良反应", self.agent)

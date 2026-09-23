@@ -138,16 +138,21 @@ def symptom_description(patient, severity_grade, profile):
             context
             + "具体起始时间、持续时长、发生频次、伴随危险信号及对日常活动的影响需尽快人工核实。"
         )
+    if severity_grade == "中度":
+        return (
+            context
+            + "发生频次、持续时间、伴随表现及与用药时间的先后关系需人工核实。"
+        )
     return (
         context
-        + "发生频次、持续时间、伴随表现及与用药时间的先后关系需人工核实。"
+        + "建议记录发生频次、持续时间、伴随表现及与用药时间的先后关系。"
     )
 
 
-def relationship_analysis(patient, product_name):
+def relationship_analysis(patient):
     return (
-        f"上述表现与{product_name}存在时间关联的可能性，但也可能与{patient['disease']}本身、"
-        f"年龄（{patient['age']}岁）或其他合并因素有关；用药时间和因果关联需由医师或药师人工核实。"
+        f"上述表现与用药时间可能存在先后关联，但也可能与{patient['disease']}本身、"
+        f"年龄（{patient['age']}岁）或其他合并因素有关；现有信息不足以确认因果关系。"
     )
 
 
@@ -162,22 +167,26 @@ def treatment_measures(patient, severity_grade, symptoms):
             f"针对反馈的{symptoms}，建议尽快触发人工干预，核实症状事实、当前全部用药及时间关系，{allergy_note}；"
             "记录生命体征和相关危险信号，如症状持续加重或出现紧急情况应及时就医，不自行调整用药。"
         )
+    if severity_grade == "中度":
+        return (
+            f"针对反馈的{symptoms}，建议人工复核症状事实、当前全部用药及时间关系，{allergy_note}；"
+            "记录症状变化，必要时联系医师或药师评估，不自行调整用药。"
+        )
     return (
-        f"针对反馈的{symptoms}，建议人工复核症状事实、当前全部用药及时间关系，{allergy_note}；"
-        "记录症状变化，必要时联系医师或药师评估，不自行调整用药。"
+        f"针对反馈的{symptoms}，建议记录症状出现时间、持续时长及变化，{allergy_note}；"
+        "保持休息并观察，必要时联系医师或药师评估，不自行调整用药。"
     )
 
 
-def treatment_outcome(product_name, symptoms, relationship, measures):
-    relationship_summary = "可能存在时间关联但仍需人工核实"
-    if product_name not in relationship:
-        relationship_summary = "关联性仍需人工核实"
-    measures_summary = "症状核实、监测及联系医师或药师建议"
-    if "及时就医" in measures:
+def treatment_outcome(severity_grade, symptoms, measures):
+    measures_summary = "症状观察、监测及必要时联系医师或药师建议"
+    if severity_grade == "中度":
+        measures_summary = "症状复核、监测及联系医师或药师建议"
+    elif "及时就医" in measures:
         measures_summary = "人工干预、危险信号监测及必要时及时就医建议"
     return (
-        f"结合{symptoms}的症状描述、与{product_name}{relationship_summary}的分析及{measures_summary}，"
-        "当前资料未提供处理后转归，待后续随访核实并记录。"
+        f"结合{symptoms}的症状描述、用药时间关联尚不能确认的分析及{measures_summary}，"
+        "当前资料未提供处理后转归，待后续随访观察并记录。"
     )
 
 
@@ -199,7 +208,7 @@ def build_record(patient, product_name, service_start, service_end):
         raise ValueError(f"{patient['userid']}激活时间缺失或无效：{patient.get('activateTime')}，停止生成") from error
     profile = symptom_profile(patient)
     symptoms = profile["summary"]
-    relationship = relationship_analysis(patient, product_name)
+    relationship = relationship_analysis(patient)
     measures = treatment_measures(patient, severity_grade, symptoms)
     record = {
         "userid": patient["userid"],
@@ -210,7 +219,7 @@ def build_record(patient, product_name, service_start, service_end):
         "severityGrade": severity_grade,
         "medicationRelationship": relationship,
         "treatmentMeasures": measures,
-        "treatmentOutcome": treatment_outcome(product_name, symptoms, relationship, measures),
+        "treatmentOutcome": treatment_outcome(severity_grade, symptoms, measures),
         "manualIntervention": manual_intervention,
         "followupRecord": "",
         "remark": remark(patient, severity_grade, product_name),

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { validateAdverseReactionWording } from "./adverse_reaction_wording.mjs";
 
 const nodeModules = process.env.CODEX_NODE_MODULES;
 if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
@@ -170,7 +171,7 @@ const patientByUserid = new Map(sourcePatients.map((patient) => [patient.userid,
 for (const record of records) {
   for (const field of REQUIRED_FIELDS) assert(String(record[field] ?? "").trim(), `${record.userid}缺少必填字段${field}`);
   assert(!String(record.symptomDescription).includes(productName), `${record.userid}症状描述不得包含当前产品名称`);
-  assert(String(record.medicationRelationship).includes(productName), `${record.userid}关系分析缺少产品名称`);
+  validateAdverseReactionWording(record, productName);
   assert(!String(record.symptomDescription).includes("结构化草案："), `${record.userid}症状描述包含旧草案前缀`);
   assert(!String(record.remark).includes("人工审核草案："), `${record.userid}备注包含旧草案前缀`);
   assert(!String(record.symptomDescription).includes("草案"), `${record.userid}症状描述包含草案标签`);
