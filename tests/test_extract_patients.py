@@ -34,14 +34,102 @@ class ExtractPatientsTest(unittest.TestCase):
             source = Path(temp_dir) / "source.xlsx"
             output = Path(temp_dir) / "patients.json"
             write_workbook(source, headers, rows)
+            original_bytes = source.read_bytes()
             result = subprocess.run(
                 [sys.executable, str(SCRIPT), "--source", str(source), "--output", str(output)],
                 capture_output=True,
                 text=True,
                 check=False,
             )
+            self.assertEqual(source.read_bytes(), original_bytes)
             payload = json.loads(output.read_text(encoding="utf-8")) if output.exists() else None
             return result, payload
+
+    def test_accepts_manufacturer_medication_alias_for_every_reminder_layout(self):
+        metadata = ["用户类型", "来源任务ID", "来源月份"]
+        layouts = [
+            (13, []),
+            (14, ["手术名称"]),
+            (15, ["手术名称", "耗材名称"]),
+            (16, metadata),
+            (17, metadata + ["手术名称"]),
+            (17, metadata + ["手术方案"]),
+            (18, metadata + ["手术名称", "耗材名称"]),
+        ]
+        for column_count, extra_headers in layouts:
+            with self.subTest(extra_headers=extra_headers):
+                canonical_headers = REMINDER_HEADERS[:7] + extra_headers + REMINDER_HEADERS[7:]
+                alias_headers = [
+                    "关联厂家用药" if header == "联合用药" else header
+                    for header in canonical_headers
+                ]
+                values = dict(zip(REMINDER_HEADERS, [
+                    1, "u-alias", "测试患者", "女", 42, "测试疾病", "青霉素过敏",
+                    "  厂家药A；厂家药B\n厂家药C  ", "2026-09-09 11:25:02",
+                    "旧方案", "7天", "", "是",
+                ]))
+                values.update({
+                    "用户类型": "续订用户", "来源任务ID": 28, "来源月份": "2026-08",
+                    "手术名称": "旧术式", "手术方案": "旧术式", "耗材名称": "旧耗材",
+                })
+                row = [values[header] for header in canonical_headers]
+                canonical_result, canonical_payload = self.run_extractor(canonical_headers, [row])
+                result, payload = self.run_extractor(alias_headers, [row])
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(canonical_result.returncode, 0, canonical_result.stderr)
+                self.assertEqual(payload["inputFormat"], f"medicationReminder{column_count}")
+                self.assertEqual(payload["headers"], alias_headers)
+                self.assertEqual(payload["combinedMedicationSource"], "关联厂家用药")
+                self.assertEqual(canonical_payload["combinedMedicationSource"], "generated")
+                self.assertNotIn("sourceCombinedMedication", canonical_payload["patients"][0])
+                alias_patient = dict(payload["patients"][0])
+                self.assertEqual(alias_patient.pop("sourceCombinedMedication"), values["联合用药"])
+                self.assertEqual(alias_patient, canonical_payload["patients"][0])
+                self.assertEqual(payload["summary"], canonical_payload["summary"])
+                patient = payload["patients"][0]
+                self.assertEqual(patient["userid"], "u-alias")
+                self.assertEqual(patient["sourceConfirmationTime"], "2026-09-09 11:25:02")
+                self.assertEqual(patient["activateTime"], "")
+                self.assertEqual(patient["allergyHistory"], "青霉素过敏")
+                self.assertEqual(patient["adverseEvent"], "是")
+                self.assertEqual(patient["sourceTaskId"], "28" if column_count >= 16 else "")
+                for field in ["combinedMedication", "medicationPlan", "surgeryName", "consumableName"]:
+                    self.assertNotIn(field, patient)
+
+    def test_preserves_empty_manufacturer_medication_without_filling_it(self):
+        headers = ["关联厂家用药" if h == "联合用药" else h for h in REMINDER_HEADERS]
+        row = [1, "u-empty", "测试患者", "男", 51, "测试疾病", "无",
+               None, "2026-09-09 11:25:02", "旧方案", "7天", "", "否"]
+        result, payload = self.run_extractor(headers, [row])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["combinedMedicationSource"], "关联厂家用药")
+        self.assertEqual(payload["patients"][0]["sourceCombinedMedication"], "")
+
+    def test_alias_does_not_bypass_missing_confirmation_time(self):
+        headers = [
+            "关联厂家用药" if header == "联合用药" else header
+            for header in REMINDER_HEADERS
+        ]
+        row = [1, "u-alias", "测试患者", "男", 51, "测试疾病", "无",
+               "旧药", "", "旧方案", "7天", "", "否"]
+
+        result, payload = self.run_extractor(headers, [row])
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(payload)
+        self.assertIn("用药方案确认时间无效", result.stderr)
+
+    def test_does_not_merge_canonical_and_manufacturer_medication_columns(self):
+        headers = REMINDER_HEADERS[:8] + ["关联厂家用药"] + REMINDER_HEADERS[8:]
+        row = [1, "u-both", "测试患者", "女", 42, "测试疾病", "无",
+               "原联合用药", "厂家用药", "2026-09-09 11:25:02", "旧方案", "7天", "", "否"]
+
+        result, payload = self.run_extractor(headers, [row])
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(payload)
+        self.assertIn("表头不符合", result.stderr)
 
     def test_accepts_medication_reminder_thirteen_column_format(self):
         row = [

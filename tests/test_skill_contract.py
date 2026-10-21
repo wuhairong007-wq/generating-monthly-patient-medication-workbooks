@@ -24,7 +24,31 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.22.4"', frontmatter)
+        self.assertIn('version: "1.22.8"', frontmatter)
+
+    def test_medication_precautions_and_clock_time_contract(self):
+        for document in (self.skill, self.contract, self.clinical_rules):
+            for phrase in ("饮食禁忌", "合并用药", "用药观察", "储存保存", "HH:mm",
+                           "06:00、14:00、22:00", "06:00、22:00"):
+                self.assertIn(phrase, document)
+        self.assertIn("缺项", self.contract)
+        self.assertIn("不猜测", self.contract)
+
+    def test_documents_manufacturer_medication_column_fallback(self):
+        for document in [self.skill, self.contract, self.clinical_rules]:
+            self.assertIn("关联厂家用药", document)
+            self.assertIn("缺少", document)
+            self.assertIn("联合用药", document)
+            self.assertIn("不是临床证据", document)
+            self.assertIn("跳过该字段的生成", document)
+            self.assertIn("sourceCombinedMedication", document)
+            self.assertIn("空值保持为空", document)
+            self.assertIn("用药方案、处方和逐药明细必须与源列一致", document)
+            self.assertIn("不代表完整治疗方案", document)
+            self.assertNotIn("不要求 M 列等于内部生成药名列表", document)
+        for document in [self.skill, self.contract]:
+            self.assertIn("medicationReminder17", document)
+            self.assertIn("手术方案", document)
 
     def test_insight_metrics_keep_all_combination_modes(self):
         schema = (SKILL_DIR / "references" / "insight-report-schema.md").read_text(encoding="utf-8")

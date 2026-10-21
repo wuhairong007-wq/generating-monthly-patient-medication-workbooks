@@ -7,6 +7,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parents[1]
 import sys
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
+from test_disease_specific_plans import medication
 MODULE_PATH = SKILL_DIR / "scripts" / "generate_payload.py"
 SPEC = importlib.util.spec_from_file_location("generate_payload", MODULE_PATH)
 generate_payload = importlib.util.module_from_spec(SPEC)
@@ -37,9 +38,9 @@ def profile():
             "singleDose": "10mg",
             "route": "口服",
             "frequency": "每日1次",
-            "medicationTime": "早餐后",
+            "medicationTime": "08:00",
             "treatmentDays": 30,
-            "precautions": "需经医师或药师审核",
+            "precautions": medication("测试产品")["precautions"],
         },
         "directProductAdjuncts": [],
         "diseasePlans": [{
@@ -60,9 +61,9 @@ def candidate(name):
         "singleDose": "10mg",
         "route": "口服",
         "frequency": "每日1次",
-        "medicationTime": "早餐后",
+        "medicationTime": "08:00",
         "treatmentDays": 30,
-        "precautions": "仅在医师确认疾病指征后启用",
+        "precautions": medication(name)["precautions"],
         "role": "diseaseTreatment",
         "diseaseRationale": "用于功能性便秘治疗",
         "evidence": [{"title": "官方指南", "url": "https://www.nhc.gov.cn/guide", "scope": "功能性便秘候选药"}],

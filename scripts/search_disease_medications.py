@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from urllib.request import Request, urlopen
 
+from medication_fields import PRECAUTION_SECTIONS, normalize_medication_time
 
 ALLOWED_DOMAINS = (
     "nmpa.gov.cn",
@@ -138,8 +139,15 @@ def parse_source_page(html, source_url, source_title, disease):
         "frequency": _field(text, ("频次", "用药频次", "每日次数")),
         "medicationTime": _field(text, ("用药时间", "服用时间", "给药时间")),
         "treatmentDays": _integer_days(_field(text, ("疗程", "治疗天数"))),
+        "precautions": {section: _field(text, (section,)) for section in PRECAUTION_SECTIONS},
     }
     missing = [field for field in REQUIRED_FIELDS if not values.get(field)]
+    missing.extend(f"precautions.{section}" for section, value in values["precautions"].items() if not value)
+    if values["medicationTime"]:
+        try:
+            normalize_medication_time(values["medicationTime"], drug_name)
+        except ValueError:
+            missing.append("medicationTime")
     rationale = _field(text, ("疾病关联", "适应证", "适应症", "治疗关联"))
     if not rationale:
         rationale = f"来源页明确描述该药用于{disease}相关治疗或症状管理"
@@ -151,7 +159,6 @@ def parse_source_page(html, source_url, source_title, disease):
         **values,
         "role": "diseaseTreatment",
         "diseaseRationale": rationale,
-        "precautions": "仅在医师或药师确认当前疾病指征后使用；实际剂量和疗程须复核；不作疗效承诺",
         "evidence": [{"title": source_title or "白名单临床来源", "url": source_url, "scope": f"{disease}候选药及用法字段"}],
     }
     return [candidate], [], "parsed"

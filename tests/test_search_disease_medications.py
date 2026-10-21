@@ -20,8 +20,10 @@ class SearchDiseaseMedicationsTest(unittest.TestCase):
         <article>
           <h1>慢性便秘诊疗指南</h1>
           <p>疾病：功能性便秘。药品名称：聚乙二醇4000散；规格：10g/袋；
-          每次用量：10g；给药途径：口服；频次：每日1次；用药时间：早餐后；
-          疗程：30天；疾病关联：用于功能性便秘的渗透性通便治疗。</p>
+          每次用量：10g；给药途径：口服；频次：每日1次；用药时间：08:00；
+          疗程：30天；疾病关联：用于功能性便秘的渗透性通便治疗；
+          饮食禁忌：测试饮食依据；合并用药：测试相互作用依据；
+          用药观察：测试观察依据；储存保存：测试包装贮藏依据。</p>
         </article>
         """
 
@@ -37,6 +39,7 @@ class SearchDiseaseMedicationsTest(unittest.TestCase):
         candidate = result["candidates"][0]
         self.assertEqual(candidate["drugName"], "聚乙二醇4000散")
         self.assertEqual(candidate["role"], "diseaseTreatment")
+        self.assertEqual(candidate["precautions"]["储存保存"], "测试包装贮藏依据")
         self.assertIn("功能性便秘", candidate["diseaseRationale"])
         self.assertEqual(candidate["evidence"][0]["url"], "https://www.nhc.gov.cn/guide/constipation")
         self.assertEqual(result["sources"][0]["status"], "parsed")
@@ -83,6 +86,14 @@ class SearchDiseaseMedicationsTest(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["candidates"], [])
         self.assertTrue(result["errors"])
+
+    def test_complete_dose_without_four_precaution_sources_is_incomplete(self):
+        from search_disease_medications import parse_source_page
+        page = ("功能性便秘用于治疗。药品名称：测试药；规格：10mg；每次用量：10mg；"
+                "给药途径：口服；频次：每日1次；用药时间：08:00；疗程：7天；")
+        complete, incomplete, _ = parse_source_page(page, "https://www.nhc.gov.cn/test", "测试指南", "功能性便秘")
+        self.assertEqual(complete, [])
+        self.assertIn("precautions.储存保存", incomplete[0]["missingFields"])
 
 
 if __name__ == "__main__":

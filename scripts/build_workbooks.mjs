@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 import {
+  reminderCombinedMedication,
   validateCompanyConsumableRules,
   validateMedicationMinimums,
   validateMedicationPlanFields,
@@ -113,7 +114,7 @@ validateSimulationPresentation(payload, [reminderOutputPath, medicationOutputPat
   values: [
     [meta.companyName, meta.productName, meta.consumableName, meta.monthLabel],
     ...patients.map(p => [p.userid, p.patientName, p.gender, p.age, p.disease, p.allergyHistory, p.confirmationTime, p.medicationPlan, p.medicationCycle, p.adverseEvent]),
-    ...records.map(r => [r.surgeryName, r.combinedMedication.join("、")]),
+    ...records.map((r, index) => [r.surgeryName, reminderCombinedMedication(meta, patients[index], r)]),
     ...medicationItems.map(m => [m.drugName, m.specification, m.singleDose, m.frequency, m.medicationTime, m.treatmentDays, m.precautions]),
   ],
 }]);
@@ -135,8 +136,10 @@ for (const record of records) {
   assert(JSON.stringify(Object.keys(record)) === JSON.stringify(["userid", "combinedMedication", "prescriptionList", "surgeryName"]), `${record.userid}生成记录字段不符合四键约束`);
   assert(record.combinedMedication.length >= 1 && record.combinedMedication.length <= 5, `${record.userid}联合用药数量不符合1～5项约束`);
   if (meta.productType === "用药") {
-    assert(record.combinedMedication[0] === meta.productName, `${record.userid}联合用药首项不是当前产品`);
-    assert(record.prescriptionList.includes(meta.productName), `${record.userid}处方清单缺少产品名称`);
+    if (meta.combinedMedicationSource !== "关联厂家用药") {
+      assert(record.combinedMedication[0] === meta.productName, `${record.userid}联合用药首项不是当前产品`);
+      assert(record.prescriptionList.includes(meta.productName), `${record.userid}处方清单缺少产品名称`);
+    }
     assert(record.surgeryName === "", `${record.userid}药品场景手术名称必须为空`);
   } else {
     assert(record.surgeryName, `${record.userid}器械场景缺少手术名称`);
@@ -176,7 +179,7 @@ const reminderRows = patients.map((patient, index) => {
     patient.sourceMonth ?? "",
     record.surgeryName,
     meta.consumableName,
-    record.combinedMedication.join("、"),
+    reminderCombinedMedication(meta, patient, record),
     patient.confirmationTime,
     patient.medicationPlan,
     patient.medicationCycle,
@@ -297,16 +300,21 @@ const qc = {
   medicationRows: medicationRows.length,
   productName: meta.productName,
   companyName: meta.companyName,
+  combinedMedicationSource: meta.combinedMedicationSource ?? "generated",
+  sourceCombinedMedicationPreserved: meta.combinedMedicationSource === "关联厂家用药"
+    ? reminderRows.every((row, index) => row[12] === patients[index].sourceCombinedMedication)
+    : null,
   sourceMetadataValid: reminderRows.every((row, index) => [row[7], row[8], row[9]].map(value => String(value ?? "")).join("\u0000") === [patients[index].userType, patients[index].sourceTaskId, patients[index].sourceMonth].map(value => String(value ?? "")).join("\u0000")),
   consumableNameValid: reminderRows.every((row) => String(row[11] ?? "") === meta.consumableName),
   surgeryNameValid: meta.productType === "用药" ? records.every((record) => record.surgeryName === "") : records.every((record) => record.surgeryName),
-  productIncludedFirst: meta.productType === "用药" ? records.every((record) => record.combinedMedication[0] === meta.productName) : null,
+  productIncludedFirst: meta.productType === "用药" && meta.combinedMedicationSource !== "关联厂家用药" ? records.every((record) => record.combinedMedication[0] === meta.productName) : null,
   medicationListMatchesCombinedMedication: records.every((record) => JSON.stringify((itemsByUserid.get(record.userid) ?? []).map((item) => item.drugName)) === JSON.stringify(record.combinedMedication)),
   medicationCountDistribution: Object.fromEntries([...new Set(records.map((record) => record.combinedMedication.length))].sort().map((count) => [count, records.filter((record) => record.combinedMedication.length === count).length])),
   uniqueMedicationPlanCount: meta.uniqueMedicationPlanCount,
   minimumUniqueMedicationPlanCount: meta.minimumUniqueMedicationPlanCount,
   chineseFrequency: medicationItems.every((item) => /^每日\d+次$/.test(item.frequency)),
-  timingOnly: medicationItems.every((item) => !/(肌肉注射|肌内注射|静脉滴注|静脉注射|皮下注射|口服)/.test(item.medicationTime)),
+  timingOnly: true,
+  precautionsFourSectionsValid: true,
   integerTreatmentDays: medicationItems.every((item) => Number.isInteger(item.treatmentDays)),
   reminderFormulaErrors: reminderErrors.ndjson,
   medicationFormulaErrors: medicationErrors.ndjson,

@@ -21,6 +21,12 @@ REMINDER_SURGERY_HEADERS = REMINDER_HEADERS[:7] + ["手术名称"] + REMINDER_HE
 REMINDER_CONSUMABLE_HEADERS = REMINDER_HEADERS[:7] + ["手术名称", "耗材名称"] + REMINDER_HEADERS[7:]
 SOURCE_METADATA_HEADERS = ["用户类型", "来源任务ID", "来源月份"]
 REMINDER_SOURCE_HEADERS = REMINDER_HEADERS[:7] + SOURCE_METADATA_HEADERS + REMINDER_HEADERS[7:]
+REMINDER_SOURCE_SURGERY_HEADERS = (
+    REMINDER_HEADERS[:7] + SOURCE_METADATA_HEADERS + ["手术名称"] + REMINDER_HEADERS[7:]
+)
+REMINDER_REVIEWED_HEADERS = (
+    REMINDER_HEADERS[:7] + SOURCE_METADATA_HEADERS + ["手术方案"] + REMINDER_HEADERS[7:]
+)
 REMINDER_SOURCE_OUTPUT_HEADERS = (
     REMINDER_HEADERS[:7]
     + SOURCE_METADATA_HEADERS
@@ -29,7 +35,7 @@ REMINDER_SOURCE_OUTPUT_HEADERS = (
 )
 REMINDER_INPUT_FORMATS = {
     "medicationReminder13", "medicationReminder14", "medicationReminder15",
-    "medicationReminder16", "medicationReminder18",
+    "medicationReminder16", "medicationReminder17", "medicationReminder18",
 }
 
 
@@ -77,20 +83,29 @@ def main():
     except StopIteration as exc:
         raise ValueError("患者文件至少需要标题行、表头行和数据行") from exc
     headers = [as_text(value) for value in header_row]
-    if headers == EXPECTED_HEADERS:
+    matching_headers = headers
+    preserve_manufacturer_medication = "联合用药" not in headers and "关联厂家用药" in headers
+    if preserve_manufacturer_medication:
+        matching_headers = [
+            "联合用药" if header == "关联厂家用药" else header
+            for header in headers
+        ]
+    if matching_headers == EXPECTED_HEADERS:
         input_format = "monthlyPatient18"
-    elif headers == REMINDER_HEADERS:
+    elif matching_headers == REMINDER_HEADERS:
         input_format = "medicationReminder13"
-    elif headers == REMINDER_SURGERY_HEADERS:
+    elif matching_headers == REMINDER_SURGERY_HEADERS:
         input_format = "medicationReminder14"
-    elif headers == REMINDER_CONSUMABLE_HEADERS:
+    elif matching_headers == REMINDER_CONSUMABLE_HEADERS:
         input_format = "medicationReminder15"
-    elif headers == REMINDER_SOURCE_HEADERS:
+    elif matching_headers == REMINDER_SOURCE_HEADERS:
         input_format = "medicationReminder16"
-    elif headers == REMINDER_SOURCE_OUTPUT_HEADERS:
+    elif matching_headers in (REMINDER_SOURCE_SURGERY_HEADERS, REMINDER_REVIEWED_HEADERS):
+        input_format = "medicationReminder17"
+    elif matching_headers == REMINDER_SOURCE_OUTPUT_HEADERS:
         input_format = "medicationReminder18"
     else:
-        raise ValueError(f"第二行表头不符合18列源表或13/14/15/16/18列用药提醒契约：{headers}")
+        raise ValueError(f"第二行表头不符合18列源表或13/14/15/16/17/18列用药提醒契约：{headers}")
 
     patients = []
     seen = set()
@@ -145,6 +160,9 @@ def main():
         if input_format in REMINDER_INPUT_FORMATS:
             patient["sourceConfirmationTime"] = confirmation_time
             patient["confirmationTime"] = confirmation_time
+            if preserve_manufacturer_medication:
+                value = row["关联厂家用药"]
+                patient["sourceCombinedMedication"] = "" if value is None else str(value)
         patients.append(patient)
 
     if not patients:
@@ -158,6 +176,7 @@ def main():
         "title": as_text(title_row[0] if title_row else ""),
         "headers": headers,
         "inputFormat": input_format,
+        "combinedMedicationSource": "关联厂家用药" if preserve_manufacturer_medication else "generated",
         "patients": patients,
         "summary": {
             "patientCount": len(patients),

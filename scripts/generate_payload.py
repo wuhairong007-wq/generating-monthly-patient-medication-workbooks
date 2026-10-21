@@ -11,6 +11,9 @@ from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from search_disease_medications import is_allowed_url, search_candidates
+from medication_fields import (
+    append_precaution_note, format_precautions, normalize_medication_time, precaution_sections,
+)
 
 
 REQUIRED_MEDICATION_FIELDS = [
@@ -104,12 +107,13 @@ def matches(patient, conditions):
 
 def validated_medication(raw, patient):
     medication = dict(raw)
+    observation_notes = []
     for rule in medication.pop("ageDoseRules", []):
         if matches(patient, {key: rule[key] for key in ("ageMin", "ageMax") if key in rule}):
             if "singleDose" in rule:
                 medication["singleDose"] = rule["singleDose"]
             if "precautions" in rule:
-                medication["precautions"] = f'{medication.get("precautions", "")}；{rule["precautions"]}'.strip("；")
+                observation_notes.append(rule["precautions"])
             break
     sex_note = medication.pop("femalePrecautions", "") if patient["gender"] == "女" else medication.pop("malePrecautions", "")
     medication.pop("femalePrecautions", None)
@@ -136,14 +140,21 @@ def validated_medication(raw, patient):
         raise ValueError(f'{medication["drugName"]}用药时间混入给药途径')
     if not isinstance(medication["treatmentDays"], int) or medication["treatmentDays"] <= 0:
         raise ValueError(f'{medication["drugName"]}疗程天数必须为正整数')
-    notes = [str(medication["precautions"]).strip("；")]
+    context = f'{patient["userid"]}药品{medication["drugName"]}'
+    sections = precaution_sections(medication["precautions"], context)
+    medication["medicationTime"], time_note = normalize_medication_time(medication["medicationTime"], context)
+    if time_note:
+        section = "饮食禁忌" if re.search(r"餐|饭|空腹|进食|饮食", time_note) else "用药观察"
+        sections[section] += f"；{time_note}"
     if sex_note:
-        notes.append(str(sex_note).strip("；"))
+        observation_notes.append(str(sex_note).strip("；"))
     if patient["allergyHistory"] != "无":
-        notes.append(f'既往过敏史：{patient["allergyHistory"]}，用药前再次核对')
+        observation_notes.append(f'既往过敏史：{patient["allergyHistory"]}，用药前再次核对')
     if patient["adverseEvent"] not in {"否", "无", "未发生"}:
-        notes.append(f'本月AE记录为{patient["adverseEvent"]}，继续用药前先评估')
-    medication["precautions"] = "；".join(filter(None, notes))
+        observation_notes.append(f'本月AE记录为{patient["adverseEvent"]}，继续用药前先评估')
+    if observation_notes:
+        sections["用药观察"] += "；" + "；".join(observation_notes)
+    medication["precautions"] = format_precautions(sections)
     return medication
 
 
@@ -392,6 +403,55 @@ def medication_plan_signature(medications):
     )
 
 
+def source_medication_names(patient):
+    value = patient.get("sourceCombinedMedication")
+    label = f'{patient["userid"]}关联厂家用药'
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label}为空或缺失，停止生成，不自动补药")
+    pairs = {"(": ")", "（": "）", "[": "]", "【": "】"}
+    stack, names, buffer = [], [], []
+    for char in value:
+        if char in pairs:
+            stack.append(pairs[char])
+        elif char in pairs.values():
+            if not stack or stack.pop() != char:
+                raise ValueError(f"{label}括号不匹配，停止生成")
+        if char in "、,，;；\r\n" and not stack:
+            if "".join(buffer).strip():
+                names.append("".join(buffer).strip())
+            buffer = []
+        else:
+            buffer.append(char)
+    if stack:
+        raise ValueError(f"{label}括号不匹配，停止生成")
+    if "".join(buffer).strip():
+        names.append("".join(buffer).strip())
+    if not 1 <= len(names) <= 5 or len(names) != len(set(names)):
+        raise ValueError(f"{label}须为1至5种不同药品，停止生成")
+    return names
+
+
+def fixed_source_medications(profile, disease_plan, patient):
+    candidates = []
+    if profile.get("baseMedication"):
+        candidates.append(profile["baseMedication"])
+    candidates.extend(profile.get("directProductAdjuncts", []))
+    for group in disease_plan.get("medicationGroups", []):
+        if matches(patient, group.get("when", {})):
+            candidates.extend(group.get("alternatives", []))
+    candidates = [item for item in candidates if matches(patient, item.get("when", {}))]
+    selected = []
+    for name in source_medication_names(patient):
+        matched = [item for item in candidates if item.get("drugName") == name]
+        if len(matched) != 1:
+            raise ValueError(
+                f'{patient["userid"]}关联厂家用药“{name}”在当前疾病profile中'
+                "缺少可用依据或匹配不唯一，停止生成；不得替换、补充或猜测药名"
+            )
+        selected.append(matched[0])
+    return selected
+
+
 def _valid_search_candidate(candidate):
     if not isinstance(candidate, dict):
         return False
@@ -409,6 +469,11 @@ def _valid_search_candidate(candidate):
     if not isinstance(candidate["treatmentDays"], int) or candidate["treatmentDays"] <= 0:
         return False
     if ROUTE_WORDS.search(str(candidate["medicationTime"])):
+        return False
+    try:
+        precaution_sections(candidate["precautions"], candidate["drugName"])
+        normalize_medication_time(candidate["medicationTime"], candidate["drugName"])
+    except ValueError:
         return False
     return all(
         isinstance(item, dict)
@@ -494,6 +559,13 @@ def main():
     extracted = load_json(args.patients)
     profile = load_json(args.profile)
     patients = extracted["patients"]
+    combined_medication_source = extracted.get("combinedMedicationSource", "generated")
+    if combined_medication_source not in {"generated", "关联厂家用药"}:
+        raise ValueError("联合用药来源无效")
+    if combined_medication_source == "关联厂家用药":
+        for patient in patients:
+            if not isinstance(patient.get("sourceCombinedMedication"), str):
+                raise ValueError(f'{patient["userid"]}缺少关联厂家用药原值，不能自动生成该字段')
 
     audit_path = Path(args.output).expanduser().resolve().with_name("search-audit.json")
 
@@ -510,7 +582,11 @@ def main():
     if profile["productType"] == "用药" and profile.get("baseMedication", {}).get("drugName") != product_name:
         raise ValueError("用药产品必须作为baseMedication且名称完全一致")
 
-    profile, search_audit = maybe_search_and_extend_profile(profile, patients, audit_path=audit_path)
+    fixed_source = combined_medication_source == "关联厂家用药"
+    if fixed_source:
+        search_audit = []
+    else:
+        profile, search_audit = maybe_search_and_extend_profile(profile, patients, audit_path=audit_path)
     validate_profile(profile)
 
     records, medication_items, reviewed_patients = [], [], []
@@ -529,7 +605,7 @@ def main():
 
         disease_plan = choose_disease_plan(profile, patient)
         minimum_combined, minimum_disease = disease_plan_minimums(disease_plan, profile["productType"])
-        selected_groups = safe_group_alternatives(disease_plan, patient)
+        selected_groups = [] if fixed_source else safe_group_alternatives(disease_plan, patient)
         combination_key = (
             disease_plan["id"],
             tuple(
@@ -543,23 +619,39 @@ def main():
         disease_medications = choose_medication_combination(
             selected_groups, combination_index % disease_combination_count
         )
-        if len(disease_medications) < minimum_disease:
+        if not fixed_source and len(disease_medications) < minimum_disease:
             raise ValueError(
                 f'{patient["userid"]}（疾病：{patient["disease"]}）匹配疾病方案{disease_plan["id"]}后'
                 f'仅生成疾病治疗药{len(disease_medications)}种，至少需要{minimum_disease}种；'
                 "直接产品辅助品不计入数量，请补充有疾病依据且通过过敏/禁忌筛选的候选药"
             )
-        if profile["productType"] != "用药" and not disease_medications and not disease_plan["allowProductOnly"]:
+        if not fixed_source and profile["productType"] != "用药" and not disease_medications and not disease_plan["allowProductOnly"]:
             raise ValueError(f'{patient["userid"]}的疾病方案{disease_plan["id"]}未生成联合药且未允许产品单药')
         disease_medication_names_by_userid[patient["userid"]] = [item["drugName"] for item in disease_medications]
         raw_medications.extend(disease_medications)
+        if fixed_source:
+            raw_medications = fixed_source_medications(profile, disease_plan, patient)
+            disease_medications = [item for item in raw_medications if item.get("role") == "diseaseTreatment"
+                                   and item["drugName"] != product_name]
+            disease_medication_names_by_userid[patient["userid"]] = [item["drugName"] for item in disease_medications]
+            if profile["productType"] == "用药":
+                minimum_combined, minimum_disease = len(raw_medications), len(disease_medications)
+            elif len(disease_medications) < minimum_disease:
+                raise ValueError(f'{patient["userid"]}关联厂家用药中器械疾病治疗药不足{minimum_disease}种，停止生成')
 
         if not raw_medications:
             raise ValueError(f'{patient["userid"]}没有生成任何用药')
         variant_index = combination_index // disease_combination_count
-        raw_medications = apply_regimen_variants(raw_medications, variant_index)
+        raw_medications = apply_regimen_variants(raw_medications, 0 if fixed_source else variant_index)
         ensure_medications_safe_for_allergy(raw_medications, patient)
         medications = [validated_medication(raw, patient) for raw in raw_medications]
+        if fixed_source:
+            for medication in medications:
+                medication["precautions"] = append_precaution_note(
+                    medication["precautions"], "用药观察",
+                    "仅针对关联厂家列明药品生成提醒，不代表完整治疗方案；需经医师或药师审核",
+                    f'{patient["userid"]}药品{medication["drugName"]}',
+                )
         names = [item["drugName"] for item in medications]
         if len(names) != len(set(names)):
             raise ValueError(f'{patient["userid"]}联合用药出现重复药品')
@@ -588,7 +680,8 @@ def main():
         minimum_combined_by_userid[patient["userid"]] = minimum_combined
         minimum_disease_by_userid[patient["userid"]] = minimum_disease
         medication_count_rationale_by_userid[patient["userid"]] = str(
-            disease_plan.get("medicationCountRationale", "")
+            "关联厂家用药限定品种，仅生成所列药品提醒，不代表完整治疗方案" if fixed_source
+            else disease_plan.get("medicationCountRationale", "")
         ).strip()
         for medication in medications:
             medication_items.append({
@@ -640,7 +733,8 @@ def main():
             "surgerySimulationAudit": surgery_simulation_audit,
             "patientCount": len(patients),
             "inputFormat": extracted.get("inputFormat", "monthlyPatient18"),
-            "searchEnabled": os.environ.get("AUTO_MEDICATION_SEARCH", "1") != "0",
+            "combinedMedicationSource": combined_medication_source,
+            "searchEnabled": not fixed_source and os.environ.get("AUTO_MEDICATION_SEARCH", "1") != "0",
             "searchAudit": search_audit,
             "monthLabel": max(
                 (

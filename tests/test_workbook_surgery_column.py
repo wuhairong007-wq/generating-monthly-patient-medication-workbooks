@@ -42,6 +42,32 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     people[1]["adverseEvent"] = "是"
                     data = extracted(people)
                     data["inputFormat"] = "medicationReminder16"
+                    if product_type == "用药":
+                        source = folder / "source.xlsx"
+                        source_book = openpyxl.Workbook()
+                        source_sheet = source_book.active
+                        source_sheet.append(["审核修改模板"])
+                        source_sheet.append([
+                            "序号", "患者唯一标识", "姓名", "性别", "年龄", "疾病", "既往过敏史",
+                            "用户类型", "来源任务ID", "来源月份", "手术方案", "关联厂家用药",
+                            "用药方案确认时间", "用药方案", "用药周期", "方案链接", "本月是否发生不良反应（AE）",
+                        ])
+                        for sequence, person in enumerate(people, start=1):
+                            source_sheet.append([
+                                sequence, person["userid"], person["patientName"], person["gender"],
+                                person["age"], person["disease"], person["allergyHistory"],
+                                person["userType"], person["sourceTaskId"], person["sourceMonth"],
+                                "旧术式", "  测试候选药；\n测试产品  " if sequence == 1 else "测试候选药",
+                                person["sourceConfirmationTime"],
+                                "旧方案", "7天", "", person["adverseEvent"],
+                            ])
+                        source_book.save(source)
+                        source_book.close()
+                        original_source = source.read_bytes()
+                        self.run_script("extract_patients.py", "--source", source, "--output", folder / "extracted.json")
+                        data = json.loads((folder / "extracted.json").read_text())
+                        self.assertEqual(data["inputFormat"], "medicationReminder17")
+                        self.assertEqual(source.read_bytes(), original_source)
                     plans = [disease_plan(d, [d], [group("组", [medication("测试候选药")])],
                                           minimum_combined=1, minimum_disease=0,
                                           count_rationale="仅测试格式映射，非临床方案")
@@ -51,6 +77,10 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                             plan['minimumCombinedMedicationCount'] = 3
                             plan['minimumDiseaseMedicationCount'] = 3
                             plan['medicationGroups'] = [group(f'组{i}', [medication(f'测试药{i}')]) for i in range(3)]
+                    for plan in plans:
+                        for medication_group in plan["medicationGroups"]:
+                            for candidate in medication_group["alternatives"]:
+                                candidate["medicationTime"] = "08:00（随餐或餐后）"
                     spec = profile(plans, productType=product_type,
                                    companyName="商联医药(河南)有限公司（器械）" if product_type == "器械" else "测试公司",
                                    baseMedication=medication("测试产品") if product_type == "用药" else None,
@@ -69,6 +99,12 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     reminder = folder / f"用药提醒_测试产品{suffix}.xlsx"
                     meds = folder / f"用药方案_测试产品{suffix}.xlsx"
                     generated = json.loads(payload_path.read_text())
+                    if product_type == "用药":
+                        self.assertEqual(generated["meta"]["combinedMedicationSource"], "关联厂家用药")
+                        self.assertEqual([p["sourceCombinedMedication"] for p in generated["patients"]],
+                                         ["  测试候选药；\n测试产品  ", "测试候选药"])
+                        self.assertEqual([r["combinedMedication"] for r in generated["records"]],
+                                         [["测试候选药", "测试产品"], ["测试候选药"]])
                     self.assertEqual(generated['meta']['simulation'], product_type == '器械')
                     self.assertEqual(len(generated['meta']['surgerySimulationAudit']), 2 if product_type == '器械' else 0)
                     verify_args = ["--payload", payload_path, "--reminder", reminder, "--medication", meds, "--report", folder / "verify.json"]
@@ -88,6 +124,10 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                                      ["测试产品", "测试产品"] if product_type == "器械" else ["", ""])
                     self.assertEqual(sheet["R4"].value, "是")
                     self.assertEqual(sheet["N3"].value, "2026-04-10 12:00:00")
+                    if product_type == "用药":
+                        self.assertEqual(sheet["M3"].value, "  测试候选药；\n测试产品  ")
+                        self.assertEqual(sheet["M4"].value, "测试候选药")
+                        self.assertEqual(sheet["O4"].value, "测试候选药10mg")
                     self.assertIn("A1:R1", {str(r) for r in sheet.merged_cells.ranges})
                     self.assertEqual(next(iter(sheet.tables.values())).ref, "A2:R4")
                     workbook.close()
@@ -97,6 +137,20 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     self.assertEqual([medication_sheet.cell(2, c).value for c in range(3, 8)],
                                      ["姓名", "用户类型", "来源任务ID", "来源月份", "药品名称"])
                     medication_rows = list(medication_sheet.iter_rows(min_row=3, values_only=True))
+                    for row, item in zip(medication_rows, generated["medicationItems"]):
+                        self.assertEqual(row[10], "08:00")
+                        self.assertEqual(row[10], item["medicationTime"])
+                        self.assertEqual(row[12], item["precautions"])
+                        self.assertRegex(
+                            row[12],
+                            r"^饮食禁忌：.+；合并用药：.+；用药观察：.+；储存保存：.+$",
+                        )
+                        self.assertNotIn("随餐或餐后", row[10])
+                        if item["drugName"] != "测试产品":
+                            self.assertIn("随餐或餐后", row[12].split("；合并用药：")[0])
+                    if product_type == "用药":
+                        self.assertEqual([(row[1], row[6]) for row in medication_rows],
+                                         [("test-a", "测试候选药"), ("test-a", "测试产品"), ("test-b", "测试候选药")])
                     self.assertTrue(all(row[3] == ("续订用户" if row[1] == "test-a" else "新用户") for row in medication_rows))
                     self.assertTrue(all(str(row[4] or "") == ("16" if row[1] == "test-a" else "") for row in medication_rows))
                     self.assertTrue(all(str(row[5] or "") == ("2026-03" if row[1] == "test-a" else "") for row in medication_rows))
@@ -155,3 +209,50 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     result = self.run_script("verify_workbooks.mjs", *verify_args, success=False)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("来源元数据与患者记录不一致", result.stderr)
+
+                    if product_type == "用药":
+                        medication_corrupted = folder / "medication-corrupted.xlsx"
+                        with zipfile.ZipFile(reminder) as source, zipfile.ZipFile(medication_corrupted, "w") as dest:
+                            for info in source.infolist():
+                                content = source.read(info.filename)
+                                if info.filename == "xl/worksheets/sheet1.xml":
+                                    xml = ET.fromstring(content)
+                                    cell = xml.find(f"{ns}sheetData/{ns}row[@r='3']/{ns}c[@r='M3']")
+                                    for child in list(cell):
+                                        cell.remove(child)
+                                    cell.set("t", "inlineStr")
+                                    ET.SubElement(ET.SubElement(cell, f"{ns}is"), f"{ns}t").text = "被覆盖的药品"
+                                    content = ET.tostring(xml, encoding="utf-8", xml_declaration=True)
+                                dest.writestr(info, content)
+                        verify_args[3] = medication_corrupted
+                        result = self.run_script("verify_workbooks.mjs", *verify_args, success=False)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("用药提醒联合用药与来源或生成记录不一致", result.stderr)
+
+                        # Change only the saved medication fields, keeping the payload intact.
+                        verify_args[3] = reminder
+                        original_notes = generated["medicationItems"][0]["precautions"]
+                        for index, (address, value, error) in enumerate([
+                            ("K3", "08:00（随餐或餐后）", "用药时间必须仅含"),
+                            ("K3", "09:00", "用药时间与生成记录不一致"),
+                            ("M3", original_notes.split("；储存保存：")[0], "注意事项必须按"),
+                            ("M3", original_notes + "测试变更", "注意事项与生成记录不一致"),
+                        ]):
+                            with self.subTest(address=address, value=value):
+                                tampered = folder / f"medication-fields-corrupted-{index}.xlsx"
+                                with zipfile.ZipFile(meds) as source, zipfile.ZipFile(tampered, "w") as dest:
+                                    for info in source.infolist():
+                                        content = source.read(info.filename)
+                                        if info.filename == "xl/worksheets/sheet1.xml":
+                                            xml = ET.fromstring(content)
+                                            cell = xml.find(f"{ns}sheetData/{ns}row[@r='3']/{ns}c[@r='{address}']")
+                                            for child in list(cell):
+                                                cell.remove(child)
+                                            cell.set("t", "inlineStr")
+                                            ET.SubElement(ET.SubElement(cell, f"{ns}is"), f"{ns}t").text = value
+                                            content = ET.tostring(xml, encoding="utf-8", xml_declaration=True)
+                                        dest.writestr(info, content)
+                                verify_args[5] = tampered
+                                result = self.run_script("verify_workbooks.mjs", *verify_args, success=False)
+                                self.assertNotEqual(result.returncode, 0)
+                                self.assertIn(error, result.stderr)

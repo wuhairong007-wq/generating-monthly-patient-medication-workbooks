@@ -3,6 +3,72 @@ function assert(condition, message) {
 }
 
 const SPECIAL_DEVICE_COMPANY = "商联医药(河南)有限公司（器械）";
+const PRECAUTION_SECTIONS = ["饮食禁忌", "合并用药", "用药观察", "储存保存"];
+const CLOCK_LIST = /^(?:[01][0-9]|2[0-3]):[0-5][0-9](?:、(?:[01][0-9]|2[0-3]):[0-5][0-9])*$/;
+
+export function validateMedicationPresentation(item) {
+  const label = `${item.userid}药品${item.drugName}`;
+  assert(typeof item.medicationTime === "string" && CLOCK_LIST.test(item.medicationTime),
+    `${label}用药时间必须仅含HH:mm时间点，以顿号连接，不得附加备注`);
+  assert(typeof item.precautions === "string", `${label}注意事项必须为四项文本`);
+  const text = item.precautions;
+  const markers = [...text.matchAll(/(饮食禁忌|合并用药|用药观察|储存保存)[:：]/g)];
+  assert(JSON.stringify(markers.map(match => match[1])) === JSON.stringify(PRECAUTION_SECTIONS)
+    && !text.slice(0, markers[0].index).trim(),
+  `${label}注意事项必须按饮食禁忌、合并用药、用药观察、储存保存顺序填写`);
+  for (let index = 0; index < markers.length; index++) {
+    const content = text.slice(markers[index].index + markers[index][0].length,
+      markers[index + 1]?.index ?? text.length).replace(/^[；;\s]+|[；;\s]+$/g, "");
+    assert(content, `${label}注意事项的${PRECAUTION_SECTIONS[index]}不能为空`);
+  }
+}
+
+export function sourceMedicationNames(patient) {
+  const label = `${patient.userid}关联厂家用药`;
+  const value = patient.sourceCombinedMedication;
+  assert(typeof value === "string" && value.trim(), `${label}为空或缺失，停止生成，不自动补药`);
+  const pairs = new Map([["(", ")"], ["（", "）"], ["[", "]"], ["【", "】"]]);
+  const closers = new Set(pairs.values());
+  const stack = [], names = [];
+  let buffer = "";
+  for (const char of value) {
+    if (pairs.has(char)) stack.push(pairs.get(char));
+    else if (closers.has(char)) assert(stack.pop() === char, `${label}括号不匹配`);
+    if ("、,，;；\r\n".includes(char) && !stack.length) {
+      if (buffer.trim()) names.push(buffer.trim());
+      buffer = "";
+    } else buffer += char;
+  }
+  assert(!stack.length, `${label}括号不匹配`);
+  if (buffer.trim()) names.push(buffer.trim());
+  assert(names.length >= 1 && names.length <= 5 && new Set(names).size === names.length, `${label}须为1至5种不同药品`);
+  return names;
+}
+
+function validateSourceMedicationRecords(payload) {
+  const source = payload.meta.combinedMedicationSource ?? "generated";
+  assert(["generated", "关联厂家用药"].includes(source), "联合用药来源无效");
+  if (source !== "关联厂家用药") return;
+  const patients = new Map((payload.patients ?? []).map(patient => [patient.userid, patient]));
+  for (const record of payload.records ?? []) {
+    const patient = patients.get(record.userid);
+    assert(patient, `${record.userid}关联厂家用药缺少患者记录`);
+    assert(
+      JSON.stringify(record.combinedMedication) === JSON.stringify(sourceMedicationNames(patient)),
+      `${record.userid}关联厂家用药与方案药品不一致，禁止自动增减或重排品种`,
+    );
+  }
+}
+
+export function reminderCombinedMedication(meta, patient, record) {
+  const source = meta.combinedMedicationSource ?? "generated";
+  assert(["generated", "关联厂家用药"].includes(source), "联合用药来源无效");
+  if (source === "关联厂家用药") {
+    assert(typeof patient.sourceCombinedMedication === "string", `${patient.userid}缺少关联厂家用药原值，不能自动生成该字段`);
+    return patient.sourceCombinedMedication;
+  }
+  return record.combinedMedication.join("、");
+}
 
 export function validateCompanyConsumableRules(payload) {
   const { meta, records = [] } = payload;
@@ -62,6 +128,8 @@ function medicationPlanSignature(items) {
 
 export function validateMedicationMinimums(payload) {
   const { meta, records } = payload;
+  validateSourceMedicationRecords(payload);
+  if (meta.combinedMedicationSource === "关联厂家用药" && meta.productType === "用药") return;
   if (meta.productType === "器械") {
     for (const record of records) {
       const combined = meta.minimumCombinedMedicationCountByUserid?.[record.userid] ?? 3;
@@ -107,6 +175,7 @@ export function validateMedicationMinimums(payload) {
 }
 
 export function validateMedicationPlanFields(payload) {
+  validateSourceMedicationRecords(payload);
   const patients = payload.patients ?? [];
   const records = payload.records ?? [];
   const medicationItems = payload.medicationItems ?? [];
@@ -129,6 +198,7 @@ export function validateMedicationPlanFields(payload) {
       `${patient.userid}用药清单与联合用药不一致`,
     );
     for (const item of items) {
+      validateMedicationPresentation(item);
       assert(
         typeof item.displayName === "string" && item.displayName.trim() && item.displayName === item.displayName.trim(),
         `${patient.userid}用药方案格式不符合：displayName必须为规范非空字符串`,

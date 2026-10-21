@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 
 import {
+  reminderCombinedMedication,
+  sourceMedicationNames,
   validateCompanyConsumableRules,
   validateMedicationMinimums,
   validateMedicationPlanFields,
@@ -41,7 +43,10 @@ function medicationPlanPayload(count = 4) {
     { drugName: "口服补液盐I", displayName: "口服补液盐I", singleDose: "5.125g" },
     { drugName: "消旋卡多曲颗粒", displayName: "消旋卡多曲颗粒", singleDose: "30mg" },
     { drugName: "益生菌制剂", displayName: "益生菌制剂", singleDose: "2g" },
-  ].slice(0, count).map((item) => ({ userid: "u1", ...item }));
+  ].slice(0, count).map((item) => ({
+    userid: "u1", ...item, medicationTime: "08:00",
+    precautions: "饮食禁忌：测试饮食依据；合并用药：测试相互作用依据；用药观察：测试观察依据；储存保存：测试贮藏依据",
+  }));
   const combinedMedication = allItems.map((item) => item.drugName);
   return {
     meta: {
@@ -169,6 +174,52 @@ assert.throws(() => validateMedicationMinimums(payload({
 
 const exactPayload = medicationPlanPayload();
 assert.doesNotThrow(() => validateMedicationPlanFields(exactPayload));
+assert.equal(
+  reminderCombinedMedication(exactPayload.meta, exactPayload.patients[0], exactPayload.records[0]),
+  exactPayload.records[0].combinedMedication.join("、"),
+);
+for (const count of [1, 4]) {
+  const base = medicationPlanPayload(count);
+  const sourceValue = `  ${base.records[0].combinedMedication.join("；\n")}  `;
+  const preserved = structuredClone(base);
+  preserved.meta.combinedMedicationSource = "关联厂家用药";
+  preserved.patients[0].sourceCombinedMedication = sourceValue;
+  assert.equal(
+    reminderCombinedMedication(preserved.meta, preserved.patients[0], preserved.records[0]),
+    sourceValue,
+  );
+  assert.doesNotThrow(() => validateMedicationMinimums(preserved));
+  assert.doesNotThrow(() => validateMedicationPlanFields(preserved));
+  const mismatch = structuredClone(preserved);
+  mismatch.records[0].combinedMedication.push("擅自添加药品");
+  assert.throws(() => validateMedicationMinimums(mismatch), /关联厂家用药与方案药品不一致/);
+  assert.throws(() => validateMedicationPlanFields(mismatch), /关联厂家用药与方案药品不一致/);
+  preserved.medicationItems.pop();
+  assert.throws(() => validateMedicationPlanFields(preserved), /用药清单与联合用药不一致/);
+}
+assert.deepEqual(sourceMedicationNames({ userid: "u1", sourceCombinedMedication: "药A(别名、说明)；\n药B" }),
+  ["药A(别名、说明)", "药B"]);
+for (const source of ["", "  ", "药A、药A", "药A（", "药A)"]) {
+  assert.throws(() => sourceMedicationNames({ userid: "u1", sourceCombinedMedication: source }), /关联厂家用药/);
+}
+const productAbsent = medicationPlanPayload(1);
+productAbsent.meta.combinedMedicationSource = "关联厂家用药";
+productAbsent.meta.productName = "不在源清单中的当前产品";
+productAbsent.patients[0].sourceCombinedMedication = productAbsent.records[0].combinedMedication[0];
+assert.doesNotThrow(() => validateMedicationMinimums(productAbsent));
+assert.doesNotThrow(() => validateMedicationPlanFields(productAbsent));
+assert.throws(
+  () => reminderCombinedMedication(
+    { combinedMedicationSource: "关联厂家用药" }, { userid: "u1" }, exactPayload.records[0],
+  ),
+  /缺少关联厂家用药原值/,
+);
+assert.throws(
+  () => reminderCombinedMedication(
+    { combinedMedicationSource: "unknown" }, { userid: "u1" }, exactPayload.records[0],
+  ),
+  /联合用药来源无效/,
+);
 assert.equal(
   exactPayload.patients[0].medicationPlan,
   "双歧杆菌四联活菌片(思连康)1.0g、蒙脱石散3g、口服补液盐I5.125g、消旋卡多曲颗粒30mg",

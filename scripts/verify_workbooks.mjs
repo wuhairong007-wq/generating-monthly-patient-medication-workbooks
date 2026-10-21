@@ -4,6 +4,9 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 import {
+  reminderCombinedMedication,
+  sourceMedicationNames,
+  validateMedicationPresentation,
   validateCompanyConsumableRules,
   validateMedicationMinimums,
   validateMedicationPlanFields,
@@ -61,11 +64,13 @@ assert(JSON.stringify(reminderUserids) === JSON.stringify(expectedUserids), "用
 assert(reminderRows.every((row, index) => String(row[7] ?? "") === String(payload.patients[index].userType ?? "") && String(row[8] ?? "") === String(payload.patients[index].sourceTaskId ?? "") && String(row[9] ?? "") === String(payload.patients[index].sourceMonth ?? "")), "用药提醒来源元数据与患者记录不一致");
 assert(reminderRows.every((row, index) => String(row[10] ?? "") === payload.records[index].surgeryName), "用药提醒手术名称与生成记录不一致");
 assert(reminderRows.every((row) => String(row[11] ?? "") === payload.meta.consumableName), "用药提醒耗材名称与生成记录不一致");
-assert(reminderRows.every((row, index) => row[12] === payload.records[index].combinedMedication.join("、")), "用药提醒联合用药与生成记录不一致");
+assert(reminderRows.every((row, index) => String(row[12] ?? "") === reminderCombinedMedication(payload.meta, payload.patients[index], payload.records[index])), "用药提醒联合用药与来源或生成记录不一致");
 assert(reminderRows.every((row, index) => row[14] === payload.patients[index].medicationPlan), "用药提醒用药方案与生成记录不一致");
 assert(reminderRows.every((row, index) => row[15] === payload.patients[index].medicationCycle && String(row[16] ?? "") === "" && row[17] === payload.patients[index].adverseEvent), "用药提醒周期、链接或AE列错位");
 if (payload.meta.productType === "用药") {
-  assert(reminderRows.every((row) => String(row[12]).split("、")[0] === expectedProduct), "用药提醒联合用药首项缺少当前产品");
+  if ((payload.meta.combinedMedicationSource ?? "generated") === "generated") {
+    assert(reminderRows.every((row) => String(row[12]).split("、")[0] === expectedProduct), "用药提醒联合用药首项缺少当前产品");
+  }
   assert(payload.records.every((record) => record.surgeryName === ""), "用药场景surgeryName必须为空");
 } else {
   assert(payload.records.every((record) => record.surgeryName), "器械场景surgeryName不能为空");
@@ -101,7 +106,18 @@ assert(medicationRows.every((row) => {
   return patient && String(row[3] ?? "") === String(patient.userType ?? "") && String(row[4] ?? "") === String(patient.sourceTaskId ?? "") && String(row[5] ?? "") === String(patient.sourceMonth ?? "");
 }), "用药方案来源元数据与患者记录不一致");
 assert(medicationRows.every((row, index) => row[6] === payload.medicationItems[index].drugName), "用药方案药物与联合用药顺序不一致");
-if (payload.meta.productType === "用药") {
+for (const [index, row] of medicationRows.entries()) {
+  validateMedicationPresentation({ userid: row[1], drugName: row[6], medicationTime: row[10], precautions: row[12] });
+  assert(row[10] === payload.medicationItems[index].medicationTime, `${row[1]}用药时间与生成记录不一致`);
+  assert(row[12] === payload.medicationItems[index].precautions, `${row[1]}注意事项与生成记录不一致`);
+}
+if (payload.meta.combinedMedicationSource === "关联厂家用药") {
+  for (const patient of payload.patients) {
+    const savedNames = medicationRows.filter(row => row[1] === patient.userid).map(row => row[6]);
+    assert(JSON.stringify(savedNames) === JSON.stringify(sourceMedicationNames(patient)),
+      `${patient.userid}实际用药方案与关联厂家用药品种或顺序不一致`);
+  }
+} else if (payload.meta.productType === "用药") {
   assert(expectedUserids.every((userid) => medicationRows.some((row) => row[1] === userid && row[6] === expectedProduct)), "用药方案有患者缺少当前产品");
 }
 assert(medicationRows.every((row) => /^每日\d+次$/.test(String(row[9]))), "用药方案频次不是中文定量格式");
@@ -137,12 +153,17 @@ const verification = {
   consumableColumnPositionValid: true,
   consumableColumnMatchesPayload: true,
   sourceMetadataMatchesPayload: true,
+  combinedMedicationSource: payload.meta.combinedMedicationSource ?? "generated",
+  sourceCombinedMedicationPreserved: payload.meta.combinedMedicationSource === "关联厂家用药" ? true : null,
+  sourceMedicationPlanMatches: payload.meta.combinedMedicationSource === "关联厂家用药" ? true : null,
   medicationCountDistribution: Object.fromEntries([...new Set(payload.records.map((record) => record.combinedMedication.length))].sort().map((count) => [count, payload.records.filter((record) => record.combinedMedication.length === count).length])),
   uniqueMedicationPlanCount: payload.meta.uniqueMedicationPlanCount,
   minimumUniqueMedicationPlanCount: payload.meta.minimumUniqueMedicationPlanCount,
   surgeryNamesValid: payload.meta.productType === "用药" ? payload.records.every((record) => record.surgeryName === "") : payload.records.every((record) => record.surgeryName),
   chineseFrequencies: true,
   medicationTimesContainOnlyTiming: true,
+  precautionsFourSectionsValid: true,
+  medicationTimesAndPrecautionsMatchPayload: true,
   integerTreatmentDays: true,
   confirmationTimesValid: true,
   tableObjects: { reminder: reminderSheet.tables.items.length, medication: medicationSheet.tables.items.length },
