@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { loadWorkbookTools } from "./workbook_runtime.mjs";
+import { monthlyWorkbookRows } from "./workbook_rows.mjs";
 
 import {
   reminderCombinedMedication,
@@ -15,11 +15,7 @@ import {
 } from "./validate_medication_payload.mjs";
 import { validateReminderConfirmation } from "./validate_confirmation_time.mjs";
 
-const nodeModules = process.env.CODEX_NODE_MODULES;
-if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
-const runtimeRequire = createRequire(path.join(nodeModules, "package.json"));
-const artifactToolPath = runtimeRequire.resolve("@oai/artifact-tool");
-const { FileBlob, SpreadsheetFile } = await import(pathToFileURL(artifactToolPath).href);
+const { FileBlob, SpreadsheetFile, backend } = await loadWorkbookTools();
 
 function parseArgs(argv) {
   const result = {};
@@ -99,6 +95,7 @@ validateSimulationPresentation(payload, [reminderPath, medicationPath], [
 ]);
 assert(medicationValues.length === payload.medicationItems.length + 2, `用药方案行数错误：${medicationValues.length}`);
 const medicationRows = medicationValues.slice(2);
+const expectedRows = monthlyWorkbookRows(payload);
 const medicationUserids = medicationRows.map((row) => String(row[1] ?? ""));
 assert(JSON.stringify([...new Set(medicationUserids)]) === JSON.stringify(expectedUserids), "用药方案userid覆盖或患者顺序与源数据不一致");
 assert(medicationRows.every((row) => {
@@ -124,6 +121,16 @@ assert(medicationRows.every((row) => /^每日\d+次$/.test(String(row[9]))), "�
 assert(medicationRows.every((row) => !/(肌肉注射|肌内注射|静脉滴注|静脉注射|皮下注射|口服)/.test(String(row[10]))), "用药时间包含给药途径");
 assert(medicationRows.every((row) => Number.isInteger(row[11]) && row[11] > 0), "疗程天数存在非正整数");
 assert(medicationSheet.tables.items.length === 1, "用药方案必须且只能包含一个表格对象");
+for (const [name, actual, expected] of [
+  ["用药提醒", reminderRows, expectedRows.reminder],
+  ["用药方案", medicationRows, expectedRows.medication],
+]) {
+  for (let index = 0; index < expected.length; index++) {
+    assert(actual[index]?.length === expected[index].length, `${name}第${index + 3}行列数错误`);
+    assert(actual[index].every((value, column) => (value ?? "") === (expected[index][column] ?? "")),
+      `${name}第${index + 3}行字段与payload不一致`);
+  }
+}
 
 const reminderFirst = await reminderWorkbook.inspect({ kind: "region", sheetId: reminderSheet.name, range: "A1:R6", maxChars: 5000 });
 const reminderMiddle = await reminderWorkbook.inspect({ kind: "region", sheetId: reminderSheet.name, range: `A${Math.max(3, Math.floor(patientCount / 2))}:R${Math.max(3, Math.floor(patientCount / 2) + 3)}`, maxChars: 5000 });
@@ -140,6 +147,7 @@ assert(medicationErrors.ndjson.includes("matched 0 entries"), "用药方案存�
 
 const verification = {
   status: "passed",
+  backend,
   patientCount,
   reminderRows: reminderRows.length,
   medicationRows: medicationRows.length,

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { loadWorkbookTools, runPortableWorkbook } from "./workbook_runtime.mjs";
+import { monthlyWorkbookRows } from "./workbook_rows.mjs";
 
 import {
   reminderCombinedMedication,
@@ -12,11 +12,7 @@ import {
   validateSimulationPresentation,
 } from "./validate_medication_payload.mjs";
 
-const nodeModules = process.env.CODEX_NODE_MODULES;
-if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
-const runtimeRequire = createRequire(path.join(nodeModules, "package.json"));
-const artifactToolPath = runtimeRequire.resolve("@oai/artifact-tool");
-const { FileBlob, SpreadsheetFile } = await import(pathToFileURL(artifactToolPath).href);
+const { FileBlob, SpreadsheetFile, backend } = await loadWorkbookTools();
 
 function parseArgs(argv) {
   const result = {};
@@ -128,7 +124,6 @@ assert(JSON.stringify(records.map((record) => record.userid)) === JSON.stringify
 const medicationFirstOccurrenceUserids = [...new Set(medicationItems.map((item) => item.userid))];
 assert(JSON.stringify(medicationFirstOccurrenceUserids) === JSON.stringify(sourceUserids), "用药清单userid覆盖或患者顺序不一致");
 
-const patientByUserid = new Map(patients.map((patient) => [patient.userid, patient]));
 const recordByUserid = new Map(records.map((record) => [record.userid, record]));
 const itemsByUserid = new Map(sourceUserids.map((userid) => [userid, []]));
 for (const item of medicationItems) itemsByUserid.get(item.userid)?.push(item);
@@ -160,37 +155,38 @@ await progress("payload validated");
 
 await fs.mkdir(outputDir, { recursive: true });
 
+const { reminder: reminderRows, medication: medicationRows } = monthlyWorkbookRows(payload);
+const titlePrefix = meta.monthLabel ? `${meta.monthLabel}-` : "";
+const reminderWidths = [8, 34, 12, 8, 8, 18, 20, 14, 16, 14, 36, 24, 24, 22, 68, 12, 18, 30];
+const medicationWidths = [8, 34, 12, 14, 16, 14, 22, 18, 16, 14, 14, 12, 90];
+if (backend === "portable") {
+  runPortableWorkbook("build", {
+    template: reminderTemplatePath, output: reminderOutputPath, headers: reminderHeaders,
+    rows: reminderRows, title: `${titlePrefix}${meta.productName}用药提醒服务明细`,
+    widths: reminderWidths, rowHeight: 72, centerColumns: [1, 4, 5, 8, 9, 10, 14, 16, 17, 18],
+    textColumns: [14], tableName: "MedicationReminderTable", previewDir: outputDir, prefix: "reminder",
+  });
+  runPortableWorkbook("build", {
+    template: medicationTemplatePath, output: medicationOutputPath, headers: medicationHeaders,
+    rows: medicationRows, title: `${titlePrefix}${meta.productName}用药方案`,
+    widths: medicationWidths, rowHeight: 96, centerColumns: [1, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    tableName: "MedicationListTable", previewDir: outputDir, prefix: "medication",
+  });
+  const qc = { status: "passed", backend, patientCount: patients.length,
+    reminderRows: reminderRows.length, medicationRows: medicationRows.length,
+    previewsRendered: true, previewRenderer: "Pillow", outputs: { reminderOutputPath, medicationOutputPath } };
+  await fs.writeFile(path.join(outputDir, "qc.json"), JSON.stringify(qc, null, 2), "utf8");
+  console.log(JSON.stringify(qc));
+  process.exit(0);
+}
+
 const reminderWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(reminderTemplatePath));
 await progress("reminder template imported");
 const reminderSheet = reminderWorkbook.worksheets.getItemAt(0);
 assert(JSON.stringify(reminderSheet.getRange("A2:R2").values[0].map((value) => String(value ?? "").trim())) === JSON.stringify(reminderHeaders), "用药提醒模板表头不匹配");
-const reminderRows = patients.map((patient, index) => {
-  const record = recordByUserid.get(patient.userid);
-  return [
-    index + 1,
-    patient.userid,
-    patient.patientName,
-    patient.gender,
-    patient.age,
-    patient.disease,
-    patient.allergyHistory,
-    patient.userType ?? "",
-    patient.sourceTaskId ?? "",
-    patient.sourceMonth ?? "",
-    record.surgeryName,
-    meta.consumableName,
-    reminderCombinedMedication(meta, patient, record),
-    patient.confirmationTime,
-    patient.medicationPlan,
-    patient.medicationCycle,
-    "",
-    patient.adverseEvent,
-  ];
-});
 await progress("reminder rows prepared");
 const reminderExistingRows = reminderSheet.getUsedRange(true).values.length;
 if (reminderExistingRows >= 3) reminderSheet.getRange(`A3:R${reminderExistingRows}`).clear({ applyTo: "contents" });
-const titlePrefix = meta.monthLabel ? `${meta.monthLabel}-` : "";
 reminderSheet.getRange("A1").values = [[`${titlePrefix}${meta.productName}用药提醒服务明细`]];
 reminderSheet.getRangeByIndexes(2, 0, reminderRows.length, reminderHeaders.length).values = reminderRows;
 await progress("reminder values written");
@@ -207,7 +203,6 @@ reminderSheet.getRange(`H3:J${reminderRows.length + 2}`).format.horizontalAlignm
 reminderSheet.getRange(`N3:N${reminderRows.length + 2}`).format.horizontalAlignment = "center";
 reminderSheet.getRange(`P3:R${reminderRows.length + 2}`).format.horizontalAlignment = "center";
 reminderSheet.getRange(`A3:R${reminderRows.length + 2}`).format.rowHeight = 72;
-const reminderWidths = [8, 34, 12, 8, 8, 18, 20, 14, 16, 14, 36, 24, 24, 22, 68, 12, 18, 30];
 reminderWidths.forEach((width, index) => reminderSheet.getRange(`${columnName(index + 1)}:${columnName(index + 1)}`).format.columnWidth = width);
 for (const table of [...(reminderSheet.tables.items ?? [])]) table.delete();
 const reminderTable = reminderSheet.tables.add(`A2:R${reminderRows.length + 2}`, true, "MedicationReminderTable");
@@ -224,24 +219,6 @@ const medicationWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load(
 await progress("medication template imported");
 const medicationSheet = medicationWorkbook.worksheets.getItemAt(0);
 assert(JSON.stringify(medicationSheet.getRange("A2:M2").values[0].map((value) => String(value ?? "").trim())) === JSON.stringify(medicationHeaders), "用药方案模板表头不匹配");
-const medicationRows = medicationItems.map((item, index) => {
-  const patient = patientByUserid.get(item.userid);
-  return [
-    index + 1,
-    item.userid,
-    patient.patientName,
-    patient.userType ?? "",
-    patient.sourceTaskId ?? "",
-    patient.sourceMonth ?? "",
-    item.drugName,
-    item.specification,
-    item.singleDose,
-    item.frequency,
-    item.medicationTime,
-    item.treatmentDays,
-    item.precautions,
-  ];
-});
 await progress("medication rows prepared");
 const medicationExistingRows = medicationSheet.getUsedRange(true).values.length;
 if (medicationExistingRows >= 3) medicationSheet.getRange(`A3:M${medicationExistingRows}`).clear({ applyTo: "contents" });
@@ -251,7 +228,6 @@ await progress("medication values written");
 await formatRowsInChunks(medicationSheet, 3, medicationRows.length, "M", "medication", 96);
 medicationSheet.getRange(`A3:A${medicationRows.length + 2}`).format.horizontalAlignment = "center";
 medicationSheet.getRange(`D3:L${medicationRows.length + 2}`).format.horizontalAlignment = "center";
-const medicationWidths = [8, 34, 12, 14, 16, 14, 22, 18, 16, 14, 14, 12, 90];
 medicationWidths.forEach((width, index) => medicationSheet.getRange(`${columnName(index + 1)}:${columnName(index + 1)}`).format.columnWidth = width);
 medicationSheet.getRange(`L3:L${medicationRows.length + 2}`).format.numberFormat = "0";
 for (const table of [...(medicationSheet.tables.items ?? [])]) table.delete();

@@ -83,6 +83,11 @@ def main():
     except StopIteration as exc:
         raise ValueError("患者文件至少需要标题行、表头行和数据行") from exc
     headers = [as_text(value) for value in header_row]
+    monthly_manufacturer_layout = (
+        len(headers) == 19
+        and headers.count("关联厂家用药") == 1
+        and [header for header in headers if header != "关联厂家用药"] == EXPECTED_HEADERS
+    )
     matching_headers = headers
     preserve_manufacturer_medication = "联合用药" not in headers and "关联厂家用药" in headers
     if preserve_manufacturer_medication:
@@ -90,7 +95,9 @@ def main():
             "联合用药" if header == "关联厂家用药" else header
             for header in headers
         ]
-    if matching_headers == EXPECTED_HEADERS:
+    if monthly_manufacturer_layout:
+        input_format = "monthlyPatient19"
+    elif matching_headers == EXPECTED_HEADERS:
         input_format = "monthlyPatient18"
     elif matching_headers == REMINDER_HEADERS:
         input_format = "medicationReminder13"
@@ -105,7 +112,7 @@ def main():
     elif matching_headers == REMINDER_SOURCE_OUTPUT_HEADERS:
         input_format = "medicationReminder18"
     else:
-        raise ValueError(f"第二行表头不符合18列源表或13/14/15/16/17/18列用药提醒契约：{headers}")
+        raise ValueError(f"第二行表头不符合18/19列源表或13/14/15/16/17/18列用药提醒契约：{headers}")
 
     patients = []
     seen = set()
@@ -127,7 +134,7 @@ def main():
             raise ValueError(f"{userid}年龄无效：{age_raw}") from exc
         if age < 0 or age > 120 or float(age_raw) != age:
             raise ValueError(f"{userid}年龄无效：{age_raw}")
-        if input_format == "monthlyPatient18":
+        if input_format in {"monthlyPatient18", "monthlyPatient19"}:
             activated_at = as_datetime(row["激活日期"], userid)
             confirmation_time = ""
         else:
@@ -160,9 +167,9 @@ def main():
         if input_format in REMINDER_INPUT_FORMATS:
             patient["sourceConfirmationTime"] = confirmation_time
             patient["confirmationTime"] = confirmation_time
-            if preserve_manufacturer_medication:
-                value = row["关联厂家用药"]
-                patient["sourceCombinedMedication"] = "" if value is None else str(value)
+        if preserve_manufacturer_medication:
+            value = row["关联厂家用药"]
+            patient["sourceCombinedMedication"] = "" if value is None else str(value)
         patients.append(patient)
 
     if not patients:

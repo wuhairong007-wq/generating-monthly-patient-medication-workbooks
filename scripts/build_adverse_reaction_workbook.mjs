@@ -1,14 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { loadWorkbookTools, runPortableWorkbook } from "./workbook_runtime.mjs";
 import { validateAdverseReactionWording } from "./adverse_reaction_wording.mjs";
 
-const nodeModules = process.env.CODEX_NODE_MODULES;
-if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
-const runtimeRequire = createRequire(path.join(nodeModules, "package.json"));
-const artifactToolPath = runtimeRequire.resolve("@oai/artifact-tool");
-const { FileBlob, SpreadsheetFile } = await import(pathToFileURL(artifactToolPath).href);
+const { FileBlob, SpreadsheetFile, backend } = await loadWorkbookTools();
 
 const HEADERS = [
   "序号", "患者ID", "疾病", "不良反应发生时间", "不良反应症状描述",
@@ -190,15 +185,6 @@ for (const record of records) {
   validateOccurrenceTime(record.userid, occurrence, activation, servicePeriod);
 }
 
-const workbook = await SpreadsheetFile.importXlsx(await FileBlob.load(templatePath));
-const sheet = workbook.worksheets.getItemAt(0);
-const templateHeaders = sheet.getRange("A2:K2").values[0].map((value) => String(value ?? "").trim());
-assert(JSON.stringify(templateHeaders) === JSON.stringify(HEADERS), "不良反应模板表头不匹配");
-
-const existingRows = sheet.getUsedRange(true).values.length;
-if (existingRows >= 3) sheet.getRange(`A3:K${existingRows}`).clear({ applyTo: "contents" });
-for (const table of [...(sheet.tables.items ?? [])]) table.delete();
-
 const rows = records.map((record, index) => [
   index + 1,
   record.userid,
@@ -212,6 +198,25 @@ const rows = records.map((record, index) => [
   record.manualIntervention,
   record.remark,
 ]);
+const widths = [8, 34, 22, 22, 52, 20, 62, 64, 42, 18, 64];
+if (backend === "portable") {
+  const result = runPortableWorkbook("build", {
+    template: templatePath, output: outputPath, headers: HEADERS, rows, widths,
+    title: "不良反应（AE）记录清单", rowHeight: 96, centerColumns: [1, 2, 3, 4, 6, 10],
+    textColumns: [4], tableName: "AdverseReactionDraftTable", previewDir, prefix: "adverse",
+  });
+  console.log(JSON.stringify({ ...result, rowCount: rows.length,
+    distinctUseridCount: new Set(recordUserids).size, outputPath }));
+  process.exit(0);
+}
+const workbook = await SpreadsheetFile.importXlsx(await FileBlob.load(templatePath));
+const sheet = workbook.worksheets.getItemAt(0);
+const templateHeaders = sheet.getRange("A2:K2").values[0].map((value) => String(value ?? "").trim());
+assert(JSON.stringify(templateHeaders) === JSON.stringify(HEADERS), "不良反应模板表头不匹配");
+
+const existingRows = sheet.getUsedRange(true).values.length;
+if (existingRows >= 3) sheet.getRange(`A3:K${existingRows}`).clear({ applyTo: "contents" });
+for (const table of [...(sheet.tables.items ?? [])]) table.delete();
 await writeRowsInChunks(sheet, rows);
 
 const lastRow = rows.length + 2;
@@ -229,7 +234,6 @@ sheet.getRange(`F3:F${lastRow}`).format.horizontalAlignment = "center";
 sheet.getRange(`J3:J${lastRow}`).format.horizontalAlignment = "center";
 sheet.getRange(`D3:D${lastRow}`).format.numberFormat = "@";
 
-const widths = [8, 34, 22, 22, 52, 20, 62, 64, 42, 18, 64];
 widths.forEach((width, index) => {
   sheet.getRange(`${columnName(index + 1)}:${columnName(index + 1)}`).format.columnWidth = width;
 });

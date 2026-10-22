@@ -29,6 +29,40 @@ def write_workbook(path, headers, rows):
 
 
 class ExtractPatientsTest(unittest.TestCase):
+    def test_monthly_nineteen_columns_preserve_manufacturer_medications_and_activation(self):
+        sys.path.insert(0, str(SKILL_DIR / "scripts"))
+        from extract_patients import EXPECTED_HEADERS
+        original = [1, "00009", "测试患者", "2026-10-08 15:16:07", "女", 42,
+                    "", "", "测试疾病", "无", 0, 0, 0, 0, "", "否", "", "轻度患者"]
+        for position in [10, 18]:
+            with self.subTest(position=position):
+                headers = list(EXPECTED_HEADERS)
+                headers.insert(position, "关联厂家用药")
+                for text in ["  厂家药A；\n厂家药B  ", None]:
+                    row = list(original)
+                    row.insert(position, text)
+                    result, payload = self.run_extractor(headers, [row])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(payload["inputFormat"], "monthlyPatient19")
+                    self.assertEqual(payload["headers"], headers)
+                    self.assertEqual(payload["combinedMedicationSource"], "关联厂家用药")
+                    person = payload["patients"][0]
+                    self.assertEqual(person["userid"], "00009")
+                    self.assertEqual(person["sourceCombinedMedication"], text or "")
+                    self.assertEqual(person["activateTime"], "2026-10-08 15:16:07")
+                    self.assertEqual(person["patientTags"], "轻度患者")
+                    self.assertNotIn("sourceConfirmationTime", person)
+
+    def test_monthly_manufacturer_column_does_not_allow_arbitrary_extra_headers(self):
+        sys.path.insert(0, str(SKILL_DIR / "scripts"))
+        from extract_patients import EXPECTED_HEADERS
+        for extra in [["关联厂家用药", "关联厂家用药"], ["关联厂家用药", "未知列"],
+                      ["关联厂家用药", "联合用药"]]:
+            result, payload = self.run_extractor(EXPECTED_HEADERS + extra, [])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIsNone(payload)
+            self.assertIn("表头不符合", result.stderr)
+
     def run_extractor(self, headers, rows):
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "source.xlsx"

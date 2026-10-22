@@ -1,14 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { loadWorkbookTools } from "./workbook_runtime.mjs";
 import { validateAdverseReactionWording } from "./adverse_reaction_wording.mjs";
 
-const nodeModules = process.env.CODEX_NODE_MODULES;
-if (!nodeModules) throw new Error("CODEX_NODE_MODULES is required");
-const runtimeRequire = createRequire(path.join(nodeModules, "package.json"));
-const artifactToolPath = runtimeRequire.resolve("@oai/artifact-tool");
-const { FileBlob, SpreadsheetFile } = await import(pathToFileURL(artifactToolPath).href);
+const { FileBlob, SpreadsheetFile, backend } = await loadWorkbookTools();
 
 const HEADERS = [
   "序号", "患者ID", "疾病", "不良反应发生时间", "不良反应症状描述",
@@ -184,6 +179,7 @@ assert(errors.ndjson.includes("matched 0 entries"), "不良反应清单存在公
 
 const report = {
   status: "passed",
+  backend,
   rowCount: rows.length,
   distinctUseridCount: new Set(actualUserids).size,
   exactUseridOrderMatch: true,
