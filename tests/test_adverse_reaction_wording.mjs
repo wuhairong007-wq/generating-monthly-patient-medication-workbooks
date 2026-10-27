@@ -30,10 +30,10 @@ test("轻度患者三个目标字段拒绝人工核验措辞", () => {
   }
 });
 
-test("中度患者可保留风险相称的人工复核措辞", () => {
+test("中度患者保留风险相称的医师评估建议", () => {
   assert.doesNotThrow(() => validateAdverseReactionWording(record({
     severityGrade: "中度",
-    treatmentMeasures: "建议人工复核症状及当前用药，必要时联系医师。",
+    treatmentMeasures: "建议联系医师评估症状及当前用药。",
   }), "注射用胰蛋白酶"));
 });
 
@@ -68,4 +68,35 @@ test("关系分析拒绝括号中的商品名和去剂型简称", () => {
 
 test("中性关系分析通过校验", () => {
   assert.doesNotThrow(() => validateAdverseReactionWording(record(), "注射用胰蛋白酶"));
+});
+
+test("全部严重程度和可见文案字段拒绝待核对等核验占位语", () => {
+  for (const severityGrade of ["轻度", "中度", "重度"]) {
+    for (const field of [
+      "symptomDescription", "medicationRelationship", "treatmentMeasures",
+      "treatmentOutcome", "remark",
+    ]) {
+      for (const value of [
+        "症状待核对。", "具体情况需核对。", "待随访核实。",
+        "发生频次尚待确认。", "持续时间尚不明确。",
+        "当前资料未提供处理后转归。", "请复核症状是否真实发生。",
+      ]) {
+        assert.throws(
+          () => validateAdverseReactionWording(record({ severityGrade, [field]: value }), "血栓通胶囊"),
+          /核验占位文案/,
+          `${severityGrade} ${field}: ${value}`,
+        );
+      }
+    }
+  }
+});
+
+test("直接观察和后续随访安排不伪造转归并保留因果审慎判断", () => {
+  assert.doesNotThrow(() => validateAdverseReactionWording(record({
+    symptomDescription: "症状观察重点为头晕及伴随乏力，记录发生频次和持续时间。",
+    medicationRelationship: "上述表现与用药时间可能存在先后关联，不能据此确认因果关系。",
+    treatmentMeasures: "记录症状变化；持续或加重时联系医师或药师评估。",
+    treatmentOutcome: "后续随访记录头晕、乏力的变化和处理后转归。",
+    remark: "轻度分级依据患者标签，不构成诊断或处方调整结论。",
+  }), "血栓通胶囊"));
 });

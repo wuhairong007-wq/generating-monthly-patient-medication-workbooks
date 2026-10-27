@@ -162,6 +162,8 @@ for (let index = 0; index < rows.length; index += 1) {
     symptomDescription: String(row[4] ?? ""),
     medicationRelationship: String(row[6] ?? ""),
     treatmentMeasures: String(row[7] ?? ""),
+    treatmentOutcome: String(row[8] ?? ""),
+    remark: String(row[10] ?? ""),
   }, productName);
   assert(!String(row[4] ?? "").includes("草案"), `${record.userid}症状描述包含草案标签`);
   assert(!String(row[10] ?? "").includes("草案"), `${record.userid}备注包含草案标签`);
@@ -194,6 +196,7 @@ const report = {
   symptomDescriptionsExcludeProductName: true,
   mildNarrativesExcludeManualVerificationWording: true,
   medicationRelationshipsExcludePromotedProduct: true,
+  narrativesExcludePendingVerificationWording: true,
   noDraftPrefixes: true,
   tableObjects: sheet.tables.items.length,
   formulaErrors: "matched 0 entries",

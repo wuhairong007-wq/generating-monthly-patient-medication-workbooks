@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks, or asks 生成洞察报告、生成患者调研访谈、生成深度访谈 from service Excel files to create Word reports. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.22.9"
+  version: "1.22.10"
 ---
 
 # 生成月度患者用药清单
@@ -54,6 +54,8 @@ metadata:
 6. 默认将结果写入输入文件同级目录；若用户指定输出路径，使用指定路径；目标已存在时附加时间戳，不覆盖。
 
 不良反应内容必须结合患者疾病、年龄、性别、过敏史、患者标签和用户提供的产品名称。症状描述不得包含当前产品信息（包括产品名称、商品名、规格等），仅描述患者疾病、年龄、症状及发生模式。轻度患者的“不良反应症状描述”“与用药关系分析”“处理措施”不得出现“人工核实”“人工复核”“人工确认”“人工审核”等人工核验措辞。所有严重程度的关系分析不得包含当前推广产品的正式名、商品名、简称、已知别名或“本品”“该产品”等回指文案；使用“现有用药”“用药时间”等中性表达，只写可能的时间关联并保留疾病、年龄和其他合并因素解释。不得把推测写成已确认发生，不得虚构剂量、检查结果、好转/痊愈或确定性因果关系。逐行字段不得添加“结构化草案：”“人工审核草案：”等固定前缀。`severityGrade` 仅为严重程度建议，最终等级由系统规则确定。构建器和独立验证器必须执行上述文案校验。目标患者不少于20人时必须统计症状描述重复率；若同一疾病和年龄段被单个固定描述主导，应先扩充分层组合再生成工作簿。
+
+所有严重程度的症状描述、关系分析、处理措施、处理结果/转归和备注均不使用“待核对”“需核对”“待随访核实”“尚待确认”“尚不明确”“未提供”等核验占位文案。直接写具体观察项目、记录内容、评估建议和后续随访安排；缺少实际症状事实时写“症状观察重点为……”，不写成“患者已出现……”；缺少真实转归时写“后续随访记录症状变化、建议执行情况及处理后转归”，不补造好转或痊愈。关系分析中“可能存在时间关联”“不能确认因果关系”等必要医学审慎判断保留。构建器和独立验证器检查全部五个文案字段，报告字段为 `narrativesExcludePendingVerificationWording`。
 
 不良反应流程从用户文案提取三个参数：
 
@@ -142,5 +144,5 @@ metadata:
 - `allowProductOnly` 仅为 schema v2 兼容字段；用药方案是否可只使用当前产品，必须由该方案的 `minimumCombinedMedicationCount: 1` 、`minimumDiseaseMedicationCount: 0` 和非空 `medicationCountRationale` 明确支持。
 - 用药方案去重目标为 `ceil(患者数/100)`，即每增加 100 条记录增加 1 组，属于推荐优先级而非必须条件；记录数量越大，目标越高。生成器只在对应疾病方案内有直接依据且通过安全筛选的候选药及 `regimenVariants` 之间确定性轮换；去重以药品、规格、剂量、频次、时段和疗程的完整给药方案计算，并在 `meta` 中记录目标是否达成及差额。相同方案跨疾病仍只计 1 种。候选组合不足时可以继续生成，但不得用无关药品凑数；每位患者必须满足其匹配疾病方案的最低总用药数和疾病治疗药数。
 - 所有方案均须在逐药注意事项或 `prescriptionList` 中注明需医师/药师审核，不作疗效承诺。
-- 不良反应流程只输出轻度、中度或重度患者标签对应的 userid；每条记录必须包含 `userid`、`symptomDescription`、`severityGrade`、`treatmentMeasures`、`treatmentOutcome`、`remark` 六个结构化字段。症状描述不得包含当前产品信息；轻度患者的症状描述、关系分析和处理措施不得出现人工核验措辞；关系分析不得包含当前推广产品的正式名、商品名、简称、已知别名或产品回指文案。处理措施依据症状生成，处理结果/转归综合症状、关系分析和处理措施生成；不得添加固定草案前缀。
+- 不良反应流程只输出轻度、中度或重度患者标签对应的 userid；每条记录必须包含 `userid`、`symptomDescription`、`severityGrade`、`treatmentMeasures`、`treatmentOutcome`、`remark` 六个结构化字段。症状描述不得包含当前产品信息；轻度患者的症状描述、关系分析和处理措施不得出现人工核验措辞；关系分析不得包含当前推广产品的正式名、商品名、简称、已知别名或产品回指文案。所有严重程度的五个文案字段均不得使用核验占位文案。处理措施依据症状生成，处理结果/转归综合症状、关系分析和处理措施生成；不得添加固定草案前缀。
 - 不良反应症状描述必须包含对应疾病和实际年龄，按年龄段建立语境，并使用 userid 对主要症状、伴随表现和发生模式做可复现分流；不得仅按疾病和严重程度复用少量整段模板。

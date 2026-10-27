@@ -24,7 +24,7 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.22.9"', frontmatter)
+        self.assertIn('version: "1.22.10"', frontmatter)
 
     def test_medication_precautions_and_clock_time_contract(self):
         for document in (self.skill, self.contract, self.clinical_rules):

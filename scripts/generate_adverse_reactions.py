@@ -27,11 +27,11 @@ OTHER_SYMPTOMS = {
     "companion": ("食欲下降", "腹部不适", "短暂面部潮红", "活动耐量下降", "困倦感"),
 }
 OCCURRENCE_PATTERNS = (
-    "偶发且持续时间尚不明确",
-    "在日间活动后被注意到",
-    "在用药前后时间段内间歇出现",
-    "近期反复出现但频次尚待确认",
-    "休息状态下仍有出现的反馈",
+    "观察偶发症状的持续时间",
+    "记录日间活动与症状出现的关系",
+    "记录用药前后症状的变化",
+    "记录反复出现的频次",
+    "观察休息状态下的症状变化",
 )
 REQUIRED_FIELDS = (
     "userid",
@@ -131,17 +131,17 @@ def symptom_profile(patient):
 def symptom_description(patient, severity_grade, profile):
     context = (
         f"患者{patient['age']}岁，处于{profile['ageContext']}，基础疾病为{patient['disease']}。"
-        f"患者反馈可能出现{profile['summary']}，{profile['pattern']}。"
+        f"症状观察重点为{profile['summary']}，{profile['pattern']}。"
     )
     if severity_grade == "重度":
         return (
             context
-            + "具体起始时间、持续时长、发生频次、伴随危险信号及对日常活动的影响需尽快人工核实。"
+            + "重点记录起始时间、持续时长、发生频次、伴随危险信号及对日常活动的影响。"
         )
     if severity_grade == "中度":
         return (
             context
-            + "发生频次、持续时间、伴随表现及与用药时间的先后关系需人工核实。"
+            + "记录发生频次、持续时间、伴随表现及与用药时间的先后关系。"
         )
     return (
         context
@@ -158,35 +158,35 @@ def relationship_analysis(patient):
 
 def treatment_measures(patient, severity_grade, symptoms):
     allergy_note = (
-        f"并再次核对既往过敏史（{patient['allergyHistory']}）"
+        f"既往过敏史为{patient['allergyHistory']}，避免接触已知过敏原"
         if patient["allergyHistory"] != "无"
-        else "并再次确认既往过敏史"
+        else "观察有无新发过敏表现"
     )
     if severity_grade == "重度":
         return (
-            f"针对反馈的{symptoms}，建议尽快触发人工干预，核实症状事实、当前全部用药及时间关系，{allergy_note}；"
+            f"针对{symptoms}，建议尽快触发人工干预，联系医师评估症状及全部用药的时间关系；{allergy_note}；"
             "记录生命体征和相关危险信号，如症状持续加重或出现紧急情况应及时就医，不自行调整用药。"
         )
     if severity_grade == "中度":
         return (
-            f"针对反馈的{symptoms}，建议人工复核症状事实、当前全部用药及时间关系，{allergy_note}；"
+            f"针对{symptoms}，建议联系医师或药师评估症状及全部用药的时间关系；{allergy_note}；"
             "记录症状变化，必要时联系医师或药师评估，不自行调整用药。"
         )
     return (
-        f"针对反馈的{symptoms}，建议记录症状出现时间、持续时长及变化，{allergy_note}；"
+        f"针对{symptoms}，建议记录症状出现时间、持续时长及变化；{allergy_note}；"
         "保持休息并观察，必要时联系医师或药师评估，不自行调整用药。"
     )
 
 
 def treatment_outcome(severity_grade, symptoms, measures):
-    measures_summary = "症状观察、监测及必要时联系医师或药师建议"
+    measures_summary = "症状观察、监测及必要时联系医师或药师"
     if severity_grade == "中度":
-        measures_summary = "症状复核、监测及联系医师或药师建议"
+        measures_summary = "症状评估、监测及联系医师或药师"
     elif "及时就医" in measures:
-        measures_summary = "人工干预、危险信号监测及必要时及时就医建议"
+        measures_summary = "人工干预、危险信号监测及必要时及时就医"
     return (
-        f"结合{symptoms}的症状描述、用药时间关联尚不能确认的分析及{measures_summary}，"
-        "当前资料未提供处理后转归，待后续随访观察并记录。"
+        f"后续随访记录{symptoms}的变化、与用药时间的关系、"
+        f"{measures_summary}等建议的执行情况及处理后转归。"
     )
 
 
@@ -194,7 +194,7 @@ def remark(patient, severity_grade, product_name):
     return (
         f"患者为{patient['gender']}，{patient['age']}岁，疾病为{patient['disease']}，"
         f"既往过敏史为{patient['allergyHistory']}，涉及产品为{product_name}，严重程度建议为{severity_grade}。"
-        "请复核症状是否真实发生、当前用药名称及关联性；以上信息不构成诊断、处方调整或疗效结论。"
+        "关注症状变化及其与现有用药的时间顺序；以上信息不构成诊断、处方调整或疗效结论。"
     )
 
 

@@ -355,14 +355,9 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
             self.assertNotIn("草案", record["symptomDescription"])
             self.assertNotIn("草案", record["remark"])
             self.assertNotRegex(record["treatmentMeasures"], r"停药|减量|加用|继续原方案")
-            self.assertRegex(record["treatmentOutcome"], r"待.*核实|未提供")
+            self.assertIn("后续随访记录", record["treatmentOutcome"])
             self.assertNotRegex(record["treatmentOutcome"], r"痊愈|好转|恢复正常")
             self.assertLessEqual(len(record["treatmentOutcome"]), 160)
-
-        for record in (first, second):
-            symptom_tail = record["symptomDescription"].split("反馈可能出现", 1)[1]
-            selected_symptoms = "，".join(symptom_tail.split("，")[:2])
-            self.assertIn(selected_symptoms, record["treatmentMeasures"])
 
     def test_mild_records_do_not_use_manual_verification_wording(self):
         result, payload = self.run_generator(
@@ -377,6 +372,26 @@ class AdverseReactionGeneratorTest(unittest.TestCase):
         mild = next(record for record in payload["records"] if record["severityGrade"] == "轻度")
         for field in ("symptomDescription", "medicationRelationship", "treatmentMeasures"):
             self.assertNotRegex(mild[field], r"人工(?:核实|复核|确认|审核)")
+
+    def test_generated_narratives_exclude_pending_verification_for_all_severities(self):
+        result, payload = self.run_generator([
+            patient("mild", "轻度患者"),
+            patient("medium", "中度患者"),
+            patient("severe", "重度患者"),
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for record in payload["records"]:
+            for field in (
+                "symptomDescription", "medicationRelationship", "treatmentMeasures",
+                "treatmentOutcome", "remark",
+            ):
+                with self.subTest(severity=record["severityGrade"], field=field):
+                    self.assertNotRegex(
+                        record[field],
+                        r"核对|核实|复核|尚待确认|尚不明确|未提供|待随访",
+                    )
+            self.assertIn("后续随访", record["treatmentOutcome"])
+            self.assertNotRegex(record["treatmentOutcome"], r"已经|已好转|已痊愈|已恢复")
 
     def test_relationship_analysis_excludes_promoted_product_name_and_shorthand(self):
         result, payload = self.run_generator(
@@ -463,28 +478,28 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
                 "disease": "脑梗死",
                 "occurrenceTime": "2026-04-11 12:00:00",
                 "discoveryMethod": "AI用药随访发现",
-                "symptomDescription": "患者反馈可能出现头晕或乏力，具体情况需人工核实。",
+                "symptomDescription": "患者60岁，基础疾病为脑梗死。症状观察重点为头晕及乏力。",
                 "severityGrade": "中度",
-                "medicationRelationship": "上述表现与用药时间可能存在先后关联，具体因果关系需人工核实。",
-                "treatmentMeasures": "建议人工复核症状和当前用药，必要时联系医师，不自行调整用药。",
-                "treatmentOutcome": "当前资料未提供处理后转归，需在后续随访中核实并记录。",
+                "medicationRelationship": "上述表现与用药时间可能存在先后关联，不能据此确认因果关系。",
+                "treatmentMeasures": "建议联系医师评估症状和当前用药，不自行调整用药。",
+                "treatmentOutcome": "后续随访记录症状变化、建议执行情况及处理后转归。",
                 "manualIntervention": "否",
                 "followupRecord": "",
-                "remark": "涉及血栓通胶囊的相关信息需复核，不构成诊断、处方调整或疗效结论。",
+                "remark": "涉及血栓通胶囊的相关信息不构成诊断、处方调整或疗效结论。",
             },
             {
                 "userid": "u2",
                 "disease": "冠心病心绞痛",
                 "occurrenceTime": "2026-04-12 11:59:59",
                 "discoveryMethod": "患者自评反馈",
-                "symptomDescription": "患者反馈可能出现明显乏力或胃部不适，具体情况需人工核实。",
+                "symptomDescription": "患者72岁，基础疾病为冠心病心绞痛。症状观察重点为乏力及胃部不适。",
                 "severityGrade": "重度",
-                "medicationRelationship": "上述表现与用药时间可能存在先后关联，具体因果关系需人工核实。",
-                "treatmentMeasures": "建议尽快人工干预并复核当前用药，出现紧急情况及时就医，不自行调整用药。",
-                "treatmentOutcome": "当前资料未提供处理后转归，需在后续随访中核实并记录。",
+                "medicationRelationship": "上述表现与用药时间可能存在先后关联，不能据此确认因果关系。",
+                "treatmentMeasures": "建议尽快人工干预并联系医师评估当前用药，出现紧急情况及时就医，不自行调整用药。",
+                "treatmentOutcome": "后续随访记录症状变化、建议执行情况及处理后转归。",
                 "manualIntervention": "是",
                 "followupRecord": "",
-                "remark": "涉及血栓通胶囊的相关信息需复核，不构成诊断、处方调整或疗效结论。",
+                "remark": "涉及血栓通胶囊的相关信息不构成诊断、处方调整或疗效结论。",
             },
         ]
         payload = {
@@ -577,6 +592,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             self.assertTrue(report["occurrenceTimesMatchActivationPeriodRule"])
             self.assertTrue(report["mildNarrativesExcludeManualVerificationWording"])
             self.assertTrue(report["medicationRelationshipsExcludePromotedProduct"])
+            self.assertTrue(report["narrativesExcludePendingVerificationWording"])
             self.assertEqual(report["servicePeriod"], payload["meta"]["servicePeriod"])
             self.assertTrue(report["formulaErrors"].endswith("matched 0 entries"))
 
@@ -591,7 +607,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             "severityGrade": "轻度",
             "medicationRelationship": "上述表现与用药时间可能存在先后关联，现有信息不足以确认因果关系。",
             "treatmentMeasures": "建议记录症状变化，必要时联系医师或药师评估。",
-            "treatmentOutcome": "当前资料未提供处理后转归，待后续随访观察并记录。",
+            "treatmentOutcome": "后续随访记录症状变化、建议执行情况及处理后转归。",
             "manualIntervention": "否",
             "followupRecord": "",
             "remark": "涉及产品的相关信息不构成诊断、处方调整或疗效结论。",
@@ -600,6 +616,11 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             ({"symptomDescription": "患者反馈头晕，具体情况需人工核实。"}, "轻度患者"),
             ({"medicationRelationship": "上述表现与血栓通胶囊可能存在时间关联。"}, "推广产品"),
             ({"treatmentMeasures": "建议人工复核症状和当前用药。"}, "轻度患者"),
+            ({"symptomDescription": "症状待核对。"}, "核验占位文案"),
+            ({"medicationRelationship": "与用药的时间关系需核对。"}, "核验占位文案"),
+            ({"treatmentMeasures": "需核对症状发生频次。"}, "核验占位文案"),
+            ({"treatmentOutcome": "处理后转归待随访核实。"}, "核验占位文案"),
+            ({"remark": "症状是否真实发生需核对。"}, "核验占位文案"),
         ]
 
         for mutation, expected_error in cases:
@@ -645,7 +666,7 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             "severityGrade": "轻度",
             "medicationRelationship": "上述表现与用药时间可能存在先后关联，现有信息不足以确认因果关系。",
             "treatmentMeasures": "建议记录症状变化，必要时联系医师或药师评估。",
-            "treatmentOutcome": "当前资料未提供处理后转归，待后续随访观察并记录。",
+            "treatmentOutcome": "后续随访记录症状变化、建议执行情况及处理后转归。",
             "manualIntervention": "否",
             "followupRecord": "",
             "remark": "相关信息不构成诊断、处方调整或疗效结论。",
@@ -711,6 +732,33 @@ class AdverseReactionWorkbookTest(unittest.TestCase):
             workbook.save(workbook_path)
             workbook.close()
             preview_dir = temp / "previews"
+
+            for field, column in [
+                ("symptomDescription", "E"),
+                ("medicationRelationship", "G"),
+                ("treatmentMeasures", "H"),
+                ("treatmentOutcome", "I"),
+                ("remark", "K"),
+            ]:
+                with self.subTest(pending_field=field):
+                    pending_payload = copy.deepcopy(payload)
+                    pending_payload["records"][0][field] = "相关内容待核对。"
+                    pending_path = temp / f"pending-{field}.json"
+                    pending_path.write_text(json.dumps(pending_payload, ensure_ascii=False), encoding="utf-8")
+                    pending_book_path = temp / f"pending-{field}.xlsx"
+                    pending_book = load_workbook(workbook_path)
+                    pending_book.worksheets[0][f"{column}3"] = "相关内容待核对。"
+                    pending_book.save(pending_book_path)
+                    pending_book.close()
+                    pending_report = temp / f"pending-{field}-report.json"
+                    pending_verify = subprocess.run(
+                        [NODE, str(VERIFIER), "--payload", str(pending_path),
+                         "--workbook", str(pending_book_path), "--report", str(pending_report)],
+                        env=env, capture_output=True, text=True, check=False,
+                    )
+                    self.assertNotEqual(pending_verify.returncode, 0)
+                    self.assertIn("核验占位文案", pending_verify.stderr)
+                    self.assertFalse(pending_report.exists())
 
             contaminated = copy.deepcopy(payload)
             contaminated["records"][0]["symptomDescription"] += "涉及血栓通胶囊。"
