@@ -24,7 +24,7 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.22.10"', frontmatter)
+        self.assertIn('version: "1.22.12"', frontmatter)
 
     def test_medication_precautions_and_clock_time_contract(self):
         for document in (self.skill, self.contract, self.clinical_rules):
@@ -33,6 +33,11 @@ class SkillContractTest(unittest.TestCase):
                 self.assertIn(phrase, document)
         self.assertIn("缺项", self.contract)
         self.assertIn("不猜测", self.contract)
+
+    def test_precautions_document_punctuation_normalization_and_validation(self):
+        for document in (self.skill, self.contract, self.clinical_rules):
+            for phrase in ("连续标点", "。；", "追加说明", "小数", "最终验证器"):
+                self.assertIn(phrase, document)
 
     def test_documents_manufacturer_medication_column_fallback(self):
         for document in [self.skill, self.contract, self.clinical_rules]:

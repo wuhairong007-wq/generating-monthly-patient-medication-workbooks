@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks, or asks 生成洞察报告、生成患者调研访谈、生成深度访谈 from service Excel files to create Word reports. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.22.10"
+  version: "1.22.12"
 ---
 
 # 生成月度患者用药清单
@@ -134,6 +134,8 @@ metadata:
 - `patients[].medicationPlan` 显示所有药品的“展示名称+每次用量”，用中文顿号连接，有几种就显示几种。展示名称只可使用 profile 显式配置的 `displayName`；未配置时回退 `drugName`，不得自行猜测商品名。
 - 用药方案字段不得包含“用药草案：”、患者人口学描述、过敏史或审核说明等长文本；临床安全信息继续保留在逐药 `precautions` 和 `records[].prescriptionList`。
 - 用药方案“注意事项”逐药按“饮食禁忌、合并用药、用药观察、储存保存”四个方面生成，在同一单元格按上述顺序写成 `饮食禁忌：…；合并用药：…；用药观察：…；储存保存：…`，不得缺项或仅写通用审核提示。饮食要求、相互作用、观察项目及储存条件均须针对实际药品、剂型和患者，依据说明书/指南核对；不能统一套用忌口、冷藏、温度或开封期限。未查到依据时先补查，不把“未查到”写成“无禁忌/无相互作用”。具体字段格式、缺项处理和注意事项生成规则见输入输出契约及临床生成规则。
+- 用药方案“注意事项”不得包含“需医师审核、药房核对”，也不得拆开写入“需医师审核”或“药房核对”，包括带 `**` 的加粗形式。生成器、构建器和最终验证器均拦截上述文案；发现后按药品依据重写对应内容，保留四项结构及具体临床安全信息。
+- 用药方案“注意事项”不得出现“。；”“；；”“，。”等连续标点，包括仅隔空白的分隔标点。生成器去除每项首尾多余分隔标点，正文内部连续分隔标点合并为最后一个，四项之间统一用单个“；”连接；个体化及厂家来源追加说明同样处理。保留小数、时间、成对括号和引号的正常写法。构建器和最终验证器拦截残留连续标点。
 - `prescriptionList` 与用药清单中的药名及顺序必须和 `combinedMedication` 完全一致，不得出现清单外药物。
 - `frequency` 统一为 `每日N次`；`medicationTime` 只显示 `HH:mm` 具体时间点，多次用中文顿号连接，例如 `06:00、14:00、22:00` 或 `06:00、22:00`，不得包含“（随餐或餐后）”、餐前餐后、时段文字、备注或给药途径。用餐要求移入注意事项的“饮食禁忌”，其他安全备注移入“用药观察”，不得因简化时间字段而删除。profile须提供经核对的合理提醒时点，只有“早餐后”等描述而无具体时间时不得由脚本猜测，须先补齐profile。`treatmentDays` 为正整数。
 - 结合疾病、性别、年龄、既往过敏史；当前产品、直接产品辅助品及疾病治疗药均不得与过敏史冲突。候选药冲突时选择有疾病依据的替代药；当前产品或直接产品辅助品冲突，或最终输出前任一药物仍冲突时停止生成，并指出 userid、过敏史、冲突药名和人工审核/安全替代方案要求。筛选后不足该疾病方案声明的最低疾病治疗药数时停止生成，并指出 userid、疾病、疾病方案和实际数量。

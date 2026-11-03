@@ -154,7 +154,7 @@ def validated_medication(raw, patient):
         observation_notes.append(f'本月AE记录为{patient["adverseEvent"]}，继续用药前先评估')
     if observation_notes:
         sections["用药观察"] += "；" + "；".join(observation_notes)
-    medication["precautions"] = format_precautions(sections)
+    medication["precautions"] = format_precautions(precaution_sections(sections, context))
     return medication
 
 

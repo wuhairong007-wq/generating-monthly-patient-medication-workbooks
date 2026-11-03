@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from generate_payload import validated_medication
+from medication_fields import append_precaution_note
 from test_disease_specific_plans import medication, patient
 
 
@@ -35,11 +36,62 @@ class MedicationFieldsTest(unittest.TestCase):
         output = validated_medication(raw, patient("u1", "测试疾病"))
         self.assertEqual(output["precautions"], raw["precautions"])
 
+    def test_precaution_section_boundaries_use_one_separator(self):
+        for formatted in (False, True):
+            with self.subTest(formatted=formatted):
+                raw = raw_medication()
+                raw["precautions"] = {key: value + "。" for key, value in SECTIONS.items()}
+                if formatted:
+                    raw["precautions"] = "；".join(
+                        f"{key}：{value}" for key, value in raw["precautions"].items())
+                output = validated_medication(raw, patient("u1", "测试疾病"))
+                self.assertEqual(output["precautions"],
+                                 "；".join(f"{key}：{value}" for key, value in SECTIONS.items()))
+
+    def test_repeated_precaution_punctuation_is_collapsed(self):
+        for punctuation in ["。；", "；；", "，。", "、，", "！！", "?!", ".;", "：：", "。 \n；"]:
+            with self.subTest(punctuation=punctuation):
+                raw = raw_medication()
+                raw["precautions"]["用药观察"] = f"先核对{punctuation}再观察"
+                output = validated_medication(raw, patient("u1", "测试疾病"))
+                self.assertIn(f"用药观察：先核对{punctuation[-1]}再观察；", output["precautions"])
+
+    def test_appended_notes_are_normalized_without_changing_values_or_brackets(self):
+        raw = raw_medication()
+        raw["precautions"]["用药观察"] = "单次0.5mg（按说明书）；观察“皮疹”等表现。"
+        raw["femalePrecautions"] = "06:00观察。；记录变化。"
+        raw["ageDoseRules"] = [{"ageMin": 65, "precautions": "年龄提示。"}]
+        output = validated_medication(raw, patient("u1", "测试疾病", gender="女", age=70))
+        notes = append_precaution_note(
+            output["precautions"], "用药观察", "厂家来源说明。；按原清单核对。", "u1")
+        self.assertIn("单次0.5mg（按说明书）；观察“皮疹”等表现；年龄提示；06:00观察；记录变化；厂家来源说明；按原清单核对；储存保存：", notes)
+        self.assertNotIn("。；", notes)
+
+    def test_precautions_reject_physician_review_and_pharmacy_check_wording(self):
+        for section in SECTIONS:
+            for note in ["需医师审核、药房核对", "**需医师审核、药房核对**",
+                         "需医师审核", "药房核对"]:
+                for formatted in (False, True):
+                    with self.subTest(section=section, note=note, formatted=formatted):
+                        raw = raw_medication()
+                        raw["precautions"][section] += "；" + note
+                        if formatted:
+                            raw["precautions"] = "；".join(
+                                f"{key}：{value}" for key, value in raw["precautions"].items())
+                        with self.assertRaisesRegex(ValueError, "注意事项.*不得包含"):
+                            validated_medication(raw, patient("u1", "测试疾病"))
+
+    def test_appended_precautions_cannot_reintroduce_review_wording(self):
+        raw = raw_medication()
+        raw["femalePrecautions"] = "需医师审核、药房核对"
+        with self.assertRaisesRegex(ValueError, "注意事项.*不得包含"):
+            validated_medication(raw, patient("u1", "测试疾病", gender="女"))
+
     def test_incomplete_or_unstructured_precautions_do_not_get_invented_content(self):
         missing = copy.deepcopy(SECTIONS)
         missing.pop("储存保存")
         for value in [missing, {**SECTIONS, "储存保存": " "}, "一般注意事项", {},
-                      {**SECTIONS, "储存保存": 25}]:
+                      {**SECTIONS, "储存保存": 25}, {**SECTIONS, "储存保存": "。；，"}]:
             with self.subTest(value=value):
                 raw = raw_medication()
                 raw["precautions"] = value

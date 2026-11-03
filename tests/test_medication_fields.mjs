@@ -12,6 +12,27 @@ const payload = {
   }],
 };
 assert.doesNotThrow(() => validateMedicationPlanFields(payload));
+for (const punctuation of ["。；", "；；", "，。", "、，", "！！", "?!", ".;", "：：", "。 \n；"]) {
+  for (const precautions of [
+    notes.replace("；合并用药", `${punctuation}合并用药`),
+    notes.replace("测试观察项目", `先核对${punctuation}再观察`),
+  ]) {
+    const invalid = structuredClone(payload);
+    invalid.medicationItems[0].precautions = precautions;
+    assert.throws(() => validateMedicationPlanFields(invalid), /注意事项.*连续标点/);
+  }
+}
+const normalPunctuation = structuredClone(payload);
+normalPunctuation.medicationItems[0].precautions = notes.replace(
+  "测试观察项目", "单次0.5mg（按说明书）；06:00观察“皮疹”等表现");
+assert.doesNotThrow(() => validateMedicationPlanFields(normalPunctuation));
+for (const section of ["饮食禁忌", "合并用药", "用药观察", "储存保存"]) {
+  for (const wording of ["需医师审核、药房核对", "**需医师审核、药房核对**", "需医师审核", "药房核对"]) {
+    const invalid = structuredClone(payload);
+    invalid.medicationItems[0].precautions = notes.replace(`${section}：`, `${section}：${wording}；`);
+    assert.throws(() => validateMedicationPlanFields(invalid), /注意事项.*不得包含/);
+  }
+}
 for (const value of ["06:00、14:00、22:00（随餐或餐后）", "早餐后", "06:00备注", "24:00"]) {
   const invalid = structuredClone(payload);
   invalid.medicationItems[0].medicationTime = value;

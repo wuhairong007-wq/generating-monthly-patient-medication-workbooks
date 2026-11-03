@@ -12,6 +12,10 @@ export function validateMedicationPresentation(item) {
     `${label}用药时间必须仅含HH:mm时间点，以顿号连接，不得附加备注`);
   assert(typeof item.precautions === "string", `${label}注意事项必须为四项文本`);
   const text = item.precautions;
+  assert(!/需医师审核|药房核对/.test(text),
+    `${label}注意事项不得包含“需医师审核”“药房核对”，请按药品依据重写对应内容`);
+  assert(!/(?:[。；，、！？：;,!?:]|\.(?!\d))\s*(?:[。；，、！？：;,!?:]|\.(?!\d))/.test(text),
+    `${label}注意事项不得出现连续标点，如“。；”，请合并为单个分隔标点`);
   const markers = [...text.matchAll(/(饮食禁忌|合并用药|用药观察|储存保存)[:：]/g)];
   assert(JSON.stringify(markers.map(match => match[1])) === JSON.stringify(PRECAUTION_SECTIONS)
     && !text.slice(0, markers[0].index).trim(),

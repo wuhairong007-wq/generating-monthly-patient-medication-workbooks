@@ -3,8 +3,18 @@ import re
 
 PRECAUTION_SECTIONS = ("饮食禁忌", "合并用药", "用药观察", "储存保存")
 SECTION_LABEL = re.compile(r"(饮食禁忌|合并用药|用药观察|储存保存)[:：]")
+PRECAUTION_SEPARATOR = r"(?:[。；，、！？：;,!?:]|\.(?!\d))"
+REPEATED_PRECAUTION_PUNCTUATION = re.compile(
+    rf"{PRECAUTION_SEPARATOR}(?:\s*{PRECAUTION_SEPARATOR})+")
+PRECAUTION_BOUNDARY_PUNCTUATION = re.compile(
+    rf"^(?:{PRECAUTION_SEPARATOR}\s*)+|(?:\s*{PRECAUTION_SEPARATOR})+$")
 CLOCK = r"(?:[01][0-9]|2[0-3]):[0-5][0-9]"
 CLOCK_LIST = rf"{CLOCK}(?:、{CLOCK})*"
+
+
+def normalize_precaution_punctuation(text):
+    text = PRECAUTION_BOUNDARY_PUNCTUATION.sub("", text.strip())
+    return REPEATED_PRECAUTION_PUNCTUATION.sub(lambda match: match.group()[-1], text)
 
 
 def precaution_sections(value, context):
@@ -26,14 +36,20 @@ def precaution_sections(value, context):
         raise ValueError(f"{label}必须为四项对象或带四项标题的文本")
     for key in PRECAUTION_SECTIONS:
         text = sections[key]
-        if not isinstance(text, str) or not text.strip("；; \t\r\n") or SECTION_LABEL.search(text):
+        if not isinstance(text, str) or SECTION_LABEL.search(text):
             raise ValueError(f"{label}的{key}必须为非空文本，不得缺项或重复标题")
-        sections[key] = text.strip("；; \t\r\n")
+        text = normalize_precaution_punctuation(text)
+        if not text:
+            raise ValueError(f"{label}的{key}必须为非空文本，不得缺项或重复标题")
+        if re.search(r"需医师审核|药房核对", text):
+            raise ValueError(f"{label}不得包含“需医师审核”“药房核对”，请按药品依据重写对应内容")
+        sections[key] = text
     return sections
 
 
 def format_precautions(sections):
-    return "；".join(f"{key}：{sections[key]}" for key in PRECAUTION_SECTIONS)
+    return "；".join(
+        f"{key}：{normalize_precaution_punctuation(sections[key])}" for key in PRECAUTION_SECTIONS)
 
 
 def append_precaution_note(value, section, note, context):
