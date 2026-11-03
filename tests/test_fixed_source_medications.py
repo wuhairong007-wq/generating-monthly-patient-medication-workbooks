@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from test_disease_specific_plans import (
-    SCRIPT, disease_plan, extracted, group, medication, patient, profile,
+    SCRIPT, disease_plan, discharge_medication, extracted, group, medication, patient, profile,
 )
 
 
@@ -24,6 +24,10 @@ class FixedSourceMedicationsTest(unittest.TestCase):
             group(f"组{index}", [item]) for index, item in enumerate(candidates)
         ])
         product = profile([plan], productType=product_type)
+        if product_type == "器械":
+            product["surgeryRules"] = [{
+                "when": {"diseaseEqualsAny": ["测试疾病"]}, "surgeryName": "测试手术",
+            }]
         with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir)
             for name, value in [("patients", data), ("profile", product)]:
@@ -93,6 +97,23 @@ class FixedSourceMedicationsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(output)
         self.assertIn("关联厂家用药", result.stderr)
+
+    def test_fixed_device_source_preserves_order_and_discharge_scope(self):
+        source = " 测试药2；测试药0、测试药1 "
+        candidates = [discharge_medication(f"测试药{i}") for i in range(3)]
+        result, output = self.run_fixed(source, candidates=candidates, product_type="器械")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output["patients"][0]["sourceCombinedMedication"], source)
+        self.assertEqual(output["records"][0]["combinedMedication"], ["测试药2", "测试药0", "测试药1"])
+        self.assertTrue(all(item["careStage"] == "postDischarge" for item in output["medicationItems"]))
+
+        candidates[0]["careStage"] = "inpatientOnly"
+        result, output = self.run_fixed(source, candidates=candidates, product_type="器械")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(output)
+        self.assertIn("u1", result.stderr)
+        self.assertIn("测试药0", result.stderr)
+        self.assertIn("出院后", result.stderr)
 
 
 if __name__ == "__main__":

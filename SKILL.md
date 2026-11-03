@@ -2,7 +2,7 @@
 name: generating-monthly-patient-medication-workbooks
 description: Use this skill whenever a user asks “生成月度患者清单” or “生成不良反应清单 依据文件：... 产品：...” or provides a monthly patient Excel and wants individualized 联合用药、处方清单、器械手术方案、用药提醒、用药方案 or product-aware 不良反应 workbooks, or asks 生成洞察报告、生成患者调研访谈、生成深度访谈 from service Excel files to create Word reports. It preserves the required userid scope exactly, derives clinically supported content from patient data, authors from bundled templates, and verifies final Excel files.
 metadata:
-  version: "1.22.12"
+  version: "1.24.1"
 ---
 
 # 生成月度患者用药清单
@@ -101,7 +101,8 @@ metadata:
 3. profile 中把当前药品设为 `baseMedication`；仅把复溶液等与产品直接绑定的辅助品放入 `directProductAdjuncts`。按输入中的疾病分别建立 `diseasePlans`，每个方案都要有疾病条件、独立依据、`allowProductOnly` 和 `medicationGroups`。疾病方案未设置数量字段时，默认至少 3 种联合用药和至少 2 种疾病治疗药；只有产品说明书或直接相关指南支持时，才可为单药或双药方案设置 `minimumCombinedMedicationCount` 、`minimumDiseaseMedicationCount` 和非空 `medicationCountRationale`。念珠菌性阴道炎、复发性阴道念珠菌病、混合性阴道感染和二重感染等可能适用克霉唑阴道片单药或双药方案的疾病，必须由本次 profile 的证据明确配置，不能依据疾病名称自动放宽。每位患者必须且只能匹配一个 `diseasePlan`，并从该方案中选出该方案宣告的最少疾病治疗药；直接产品辅助品不计入疾病治疗药数量。优先为每个药组配置多个同疾病、同治疗角色且有依据的安全候选；同一药品的已核实规格、剂量、频次、时段或疗程变体使用 `regimenVariants` 配置，并逐变体提供药品依据，生成器按输入顺序对安全候选组合和变体做确定性轮换。
    当前产品、直接产品辅助品、疾病治疗候选药和自动检索补充药都必须通过患者级过敏筛选：既检查 profile 的 `avoidIfAllergyContains`，也检查药名（去除常见剂型后）是否直接命中过敏史；复杂交叉过敏关系必须由 profile 明确配置。最终输出前再次校验全部待输出药物，任一药物与既往过敏史冲突即停止生成，并提示 userid、过敏史、冲突药名和人工审核/安全替代方案要求，不得仅在注意事项中标记后继续输出。
    如果某个已匹配疾病方案在过敏/禁忌筛选后低于该方案声明的最低疾病治疗药数，默认自动联网检索高可信来源并尝试补充候选；可通过环境变量 `AUTO_MEDICATION_SEARCH=0` 关闭。检索只接受白名单官方/指南来源，不把搜索摘要当作药品依据；候选必须带完整规格、剂量、途径、频次、时间和疗程字段；候选字段不完整、无来源或仍不足该方案门槛时保持停止。检索过程写入 payload `meta.searchAudit`，不改写输入文件。
-4. 若 `产品类型=器械`，先核对当前产品的适用范围，再在本次产品 profile 中按患者疾病建立规范 `surgeryRules`，每位患者必须且只能匹配一条非空术式规则，再配置围手术期用药。月度患者清单默认已授权AI模拟：缺少具体部位、实际术式或器械适用依据时，不再因证据不足要求人工确认；AI结合当前产品、患者疾病及医学常识建立 `simulatedSurgeryRules`，输出规范术式，在内部 `assumptions` 和 `rationale` 中记录假设及缺口。规则格式见输入输出契约。缺少补全规则时先由AI补齐再运行生成器，不得把原不确定文案简单删掉当作事实。不得宣称假设证明真实手术发生、器械获批用途或已开立医嘱。用户明确要求真实记录时设置 `allowSimulation: false`，按真实依据生成。
+4. 若 `产品类型=器械`，先核对当前产品的适用范围，再在本次产品 profile 中按患者疾病建立规范 `surgeryRules`，每位患者必须且只能匹配一条非空术式规则；联合用药按出院后康复用药选择，不能沿用仅适用于住院或术中的药品。每种候选药及给药变体须明确 `careStage: "postDischarge"`、非空 `dischargeRationale` 和支持该出院后方案的 `evidence`，具体规则见临床生成规则。月度患者清单默认已授权AI模拟：缺少具体部位、实际术式或器械适用依据时，不再因证据不足要求人工确认；AI结合当前产品、患者疾病及医学常识建立 `simulatedSurgeryRules`，输出规范术式，在内部 `assumptions` 和 `rationale` 中记录假设及缺口。规则格式见输入输出契约。缺少补全规则时先由AI补齐再运行生成器，不得把原不确定文案简单删掉当作事实。不得宣称假设证明真实手术发生、器械获批用途或已开立医嘱。用户明确要求真实记录时设置 `allowSimulation: false`，按真实依据生成。
+   缺少出院处方、用药指征或康复症状时，月度清单按AI情景补全继续生成，不再仅因原表未提供这些资料而停止。设置 `allowMedicationSimulation: true`，为相应疾病方案提供 `medicationScenario.assumptions` 和 `rationale`；生成器逐患者保存 `meta.medicationSimulationAudit` 并设置 `meta.simulation`。补全不得改写已知疾病、过敏史及源确认时间，不得虚构引用、检查结果或已批准医嘱；逐药仍须有真实药品依据，满足出院阶段、禁忌及数量要求。真实记录模式关闭补全。格式和边界见两份契约参考文件。
 5. 生成 payload：
 
    ```bash
@@ -124,7 +125,8 @@ metadata:
 
 ## 不可放宽的规则
 
-- 器械流程每位患者的“联合用药”必须为3～5种不同药品，均来自对应疾病/围手术期方案；器械产品本身不计入药品数。器械 `minimumCombinedMedicationCount` 与 `minimumDiseaseMedicationCount` 默认均为3，不允许配置为1或2，也不因AI模拟或 `allowProductOnly` 绕过。安全候选不足时补充有直接依据的候选并重新筛选，仍不足则报告原因；不得为凑数加入无关药。生成器、构建器和最终验证器均执行该数量校验。
+- 器械流程每位患者的“联合用药”必须为3～5种不同药品，均为对应疾病的出院后康复用药；器械产品本身不计入药品数。器械 `minimumCombinedMedicationCount` 与 `minimumDiseaseMedicationCount` 默认均为3，不允许配置为1或2，也不因AI模拟或 `allowProductOnly` 绕过。安全候选不足时补充有直接依据的候选并重新筛选，仍不足则报告原因；不得为凑数加入无关药。生成器、构建器和最终验证器均执行该数量校验。
+- 器械“联合用药”、处方和逐药方案必须使用同一批出院后康复药品；自动检索和关联厂家固定品种同样要求出院后阶段、理由及依据。仅住院/术中适用或依据不足时停止并报告userid，不擅自替换厂家原文。生成器在内部 `medicationItems` 保留 `careStage`、`dischargeRationale`、`dischargeEvidence`，构建器和最终验证器均检查；不新增Excel列，结构标签不代替代理核对临床证据。
 - “手术名称”只输出规范术式，不包含“模拟候选”“待确认”“部位未详”“适用性待核实”“可能”等不确定文案。依据不足时自动进入已授权的AI情景补全：按疾病生成完整术式、记录内部假设，覆盖全部患者，不以空值或漏行绕过。最终文件内容不出现“模拟”，两份文件名必须带“模拟”；内部 `meta.simulation` 和逐患者 `surgerySimulationAudit` 保留生成来源。该授权不放宽过敏、药物禁忌、剂量、用药数量等安全校验。
 - 当 `companyName=商联医药(河南)有限公司（器械）` 且 `产品类型=器械` 时，`meta.consumableName` 和用药提醒“耗材名称”固定为当前产品名称，处方清单不能包含当前产品名称；生成器、构建器和最终验证器均执行该规则。其他公司或用药产品的“耗材名称”留空。
 - 必须覆盖全部输入 userid，且不得新增、遗漏、改写或重排 userid。
@@ -133,6 +135,7 @@ metadata:
 - 内部 `records[].combinedMedication` 列出所有实际生成药品的 `drugName`，有几种就列几种并保持生成顺序；不得省略、合并或截断。提醒表“联合用药”列优先执行上述关联厂家原值保留规则。
 - `patients[].medicationPlan` 显示所有药品的“展示名称+每次用量”，用中文顿号连接，有几种就显示几种。展示名称只可使用 profile 显式配置的 `displayName`；未配置时回退 `drugName`，不得自行猜测商品名。
 - 用药方案字段不得包含“用药草案：”、患者人口学描述、过敏史或审核说明等长文本；临床安全信息继续保留在逐药 `precautions` 和 `records[].prescriptionList`。
+- 用药提醒的“用药方案”汇总字段不显示“（疼痛时）”“（恶心时）”“（便秘时）”“（按需服用）”等条件提示，兼容中英文括号；仅在拼接每次用量的展示文本时去除，不修改原始 `singleDose`、逐药明细、注意事项或处方中的启用条件。药名中的商品名括号及剂量换算括号保留。生成器、构建器和最终验证器执行相同展示规则。
 - 用药方案“注意事项”逐药按“饮食禁忌、合并用药、用药观察、储存保存”四个方面生成，在同一单元格按上述顺序写成 `饮食禁忌：…；合并用药：…；用药观察：…；储存保存：…`，不得缺项或仅写通用审核提示。饮食要求、相互作用、观察项目及储存条件均须针对实际药品、剂型和患者，依据说明书/指南核对；不能统一套用忌口、冷藏、温度或开封期限。未查到依据时先补查，不把“未查到”写成“无禁忌/无相互作用”。具体字段格式、缺项处理和注意事项生成规则见输入输出契约及临床生成规则。
 - 用药方案“注意事项”不得包含“需医师审核、药房核对”，也不得拆开写入“需医师审核”或“药房核对”，包括带 `**` 的加粗形式。生成器、构建器和最终验证器均拦截上述文案；发现后按药品依据重写对应内容，保留四项结构及具体临床安全信息。
 - 用药方案“注意事项”不得出现“。；”“；；”“，。”等连续标点，包括仅隔空白的分隔标点。生成器去除每项首尾多余分隔标点，正文内部连续分隔标点合并为最后一个，四项之间统一用单个“；”连接；个体化及厂家来源追加说明同样处理。保留小数、时间、成对括号和引号的正常写法。构建器和最终验证器拦截残留连续标点。

@@ -1,13 +1,13 @@
 import unittest
 import test_disease_specific_plans as helpers
-from test_disease_specific_plans import disease_plan, group, medication, patient, profile
+from test_disease_specific_plans import disease_plan, discharge_medication, group, patient, profile
 
 
 class DeviceMedicationMinimumsTest(unittest.TestCase):
     run_generator = helpers.DiseaseSpecificPlansTest.run_generator
 
     def spec(self, count):
-        plan = disease_plan('围手术期', ['腹腔粘连'], [group(f'g{i}', [medication(f'测试药{i}')]) for i in range(count)])
+        plan = disease_plan('出院康复', ['腹腔粘连'], [group(f'g{i}', [discharge_medication(f'测试药{i}')]) for i in range(count)])
         return profile([plan], productType='器械', baseMedication=None,
                        surgeryRules=[{'when':{'diseaseEqualsAny':['腹腔粘连']},'surgeryName':'腹腔粘连松解术'}])
 

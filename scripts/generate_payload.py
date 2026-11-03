@@ -12,7 +12,8 @@ from pathlib import Path
 
 from search_disease_medications import is_allowed_url, search_candidates
 from medication_fields import (
-    append_precaution_note, format_precautions, normalize_medication_time, precaution_sections,
+    append_precaution_note, format_precautions, medication_plan_dose,
+    normalize_medication_time, precaution_sections,
 )
 
 
@@ -167,7 +168,24 @@ def regimen_variant_count(raw_medication):
     return len(variants) or 1
 
 
-def apply_regimen_variant(raw_medication, variant_index):
+def validate_discharge_medication(medication, context):
+    label = f'{context}药品{medication.get("drugName", "")}出院后康复用药'
+    if medication.get("careStage") != "postDischarge":
+        raise ValueError(f"{label}必须明确careStage=postDischarge，不得使用仅住院或术中用药")
+    rationale = medication.get("dischargeRationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise ValueError(f"{label}缺少非空dischargeRationale")
+    evidence = medication.get("evidence")
+    if not isinstance(evidence, list) or not evidence or not all(
+        isinstance(item, dict)
+        and all(isinstance(item.get(field), str) and item[field].strip()
+                for field in ("title", "url", "scope"))
+        for item in evidence
+    ):
+        raise ValueError(f"{label}必须提供包含title、url、scope的药品依据")
+
+
+def apply_regimen_variant(raw_medication, variant_index, product_type="用药", context=""):
     medication = dict(raw_medication)
     variants = medication.pop("regimenVariants", []) or []
     if not variants:
@@ -176,11 +194,15 @@ def apply_regimen_variant(raw_medication, variant_index):
     variant = variants[variant_index % len(variants)]
     if not isinstance(variant, dict):
         raise ValueError(f'{medication.get("drugName", "")}的regimenVariants元素必须为对象')
+    if product_type == "器械":
+        # A changed regimen needs its own discharge evidence, not inherited metadata.
+        validate_discharge_medication({"drugName": medication.get("drugName"), **variant}, context)
     if not variant.get("evidence"):
         raise ValueError(f'{medication.get("drugName", "")}的regimenVariants必须提供药品依据')
     invalid_fields = set(variant) - {
         "displayName", "specification", "singleDose", "route", "frequency",
         "medicationTime", "treatmentDays", "precautions", "evidence",
+        "careStage", "dischargeRationale",
     }
     if invalid_fields:
         raise ValueError(
@@ -351,6 +373,30 @@ def choose_disease_plan(profile, patient):
     return matched[0]
 
 
+def medication_scenario_audit(profile, disease_plan, patient, drug_names):
+    scenario = disease_plan.get("medicationScenario")
+    if scenario is None:
+        return None
+    context = f'{patient["userid"]}疾病方案{disease_plan["id"]}用药情景'
+    if profile.get("allowMedicationSimulation") is not True or profile.get("allowSimulation") is False:
+        raise ValueError(f"{context}未启用情景补全或处于真实模式")
+    if not isinstance(scenario, dict):
+        raise ValueError(f"{context}必须为对象")
+    assumptions = scenario.get("assumptions")
+    rationale = scenario.get("rationale")
+    if not isinstance(assumptions, list) or not assumptions or not all(
+        isinstance(value, str) and value.strip() for value in assumptions
+    ):
+        raise ValueError(f"{context}必须记录非空assumptions")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise ValueError(f"{context}必须记录非空rationale")
+    return {
+        "userid": patient["userid"], "disease": patient["disease"],
+        "planId": disease_plan["id"], "drugNames": drug_names,
+        "assumptions": assumptions, "rationale": rationale,
+    }
+
+
 def safe_group_alternatives(disease_plan, patient):
     selected_groups = []
     for group in disease_plan.get("medicationGroups", []):
@@ -384,11 +430,13 @@ def medication_combination_count(selected_groups):
     return count
 
 
-def apply_regimen_variants(raw_medications, variant_index):
+def apply_regimen_variants(raw_medications, variant_index, product_type="用药", context=""):
     medications = []
     remaining_index = variant_index
     for raw_medication in raw_medications:
-        medications.append(apply_regimen_variant(raw_medication, remaining_index))
+        if product_type == "器械":
+            validate_discharge_medication(raw_medication, context)
+        medications.append(apply_regimen_variant(raw_medication, remaining_index, product_type, context))
         remaining_index //= regimen_variant_count(raw_medication)
     return medications
 
@@ -452,7 +500,7 @@ def fixed_source_medications(profile, disease_plan, patient):
     return selected
 
 
-def _valid_search_candidate(candidate):
+def _valid_search_candidate(candidate, product_type="用药"):
     if not isinstance(candidate, dict):
         return False
     if (
@@ -471,6 +519,8 @@ def _valid_search_candidate(candidate):
     if ROUTE_WORDS.search(str(candidate["medicationTime"])):
         return False
     try:
+        if product_type == "器械":
+            validate_discharge_medication(candidate, "自动检索")
         precaution_sections(candidate["precautions"], candidate["drugName"])
         normalize_medication_time(candidate["medicationTime"], candidate["drugName"])
     except ValueError:
@@ -520,7 +570,10 @@ def maybe_search_and_extend_profile(profile, patients, search_fn=None, audit_pat
             "errors": result.get("errors", []) if isinstance(result, dict) else ["检索器返回结果无效"],
         }
         if isinstance(result, dict):
-            valid_candidates = [candidate for candidate in result.get("candidates", []) if _valid_search_candidate(candidate)]
+            valid_candidates = [
+                candidate for candidate in result.get("candidates", [])
+                if _valid_search_candidate(candidate, profile.get("productType", "用药"))
+            ]
             record["candidateCount"] = len(valid_candidates)
             if valid_candidates:
                 existing_names = {
@@ -597,6 +650,7 @@ def main():
     medication_count_rationale_by_userid = {}
     combination_counters = defaultdict(int)
     surgery_simulation_audit = []
+    medication_simulation_audit = []
     for patient in patients:
         raw_medications = []
         if profile.get("baseMedication"):
@@ -642,7 +696,9 @@ def main():
         if not raw_medications:
             raise ValueError(f'{patient["userid"]}没有生成任何用药')
         variant_index = combination_index // disease_combination_count
-        raw_medications = apply_regimen_variants(raw_medications, 0 if fixed_source else variant_index)
+        raw_medications = apply_regimen_variants(
+            raw_medications, 0 if fixed_source else variant_index, profile["productType"], patient["userid"],
+        )
         ensure_medications_safe_for_allergy(raw_medications, patient)
         medications = [validated_medication(raw, patient) for raw in raw_medications]
         if fixed_source:
@@ -665,6 +721,9 @@ def main():
                 f'联合用药{len(names)}种，至少需要{minimum_combined}种'
             )
 
+        medication_audit = medication_scenario_audit(profile, disease_plan, patient, names)
+        if medication_audit:
+            medication_simulation_audit.append(medication_audit)
         surgery_name, surgery_audit = resolve_surgery(profile, patient)
         if surgery_audit:
             surgery_simulation_audit.append(surgery_audit)
@@ -683,13 +742,18 @@ def main():
             "关联厂家用药限定品种，仅生成所列药品提醒，不代表完整治疗方案" if fixed_source
             else disease_plan.get("medicationCountRationale", "")
         ).strip()
-        for medication in medications:
+        for medication, raw in zip(medications, raw_medications):
             medication_items.append({
                 "userid": patient["userid"],
                 **{field: medication[field] for field in [
                     "drugName", "displayName", "specification", "singleDose", "frequency",
                     "medicationTime", "treatmentDays", "precautions",
                 ]},
+                **({
+                    "careStage": raw["careStage"],
+                    "dischargeRationale": raw["dischargeRationale"],
+                    "dischargeEvidence": raw["evidence"],
+                } if profile["productType"] == "器械" else {}),
             })
         if patient.get("sourceConfirmationTime"):
             try:
@@ -707,7 +771,7 @@ def main():
             **patient,
             "confirmationTime": confirmed_at.strftime("%Y-%m-%d %H:%M:%S"),
             "medicationPlan": "、".join(
-                f'{item["displayName"]}{str(item["singleDose"]).strip()}'
+                f'{item["displayName"]}{medication_plan_dose(item["singleDose"])}'
                 for item in medications
             ),
             "medicationCycle": cycle,
@@ -729,8 +793,9 @@ def main():
             "productType": profile["productType"],
             "productName": product_name,
             "consumableName": product_name if special_device_company else "",
-            "simulation": bool(profile.get("simulation", False) or surgery_simulation_audit),
+            "simulation": bool(profile.get("simulation", False) or surgery_simulation_audit or medication_simulation_audit),
             "surgerySimulationAudit": surgery_simulation_audit,
+            "medicationSimulationAudit": medication_simulation_audit,
             "patientCount": len(patients),
             "inputFormat": extracted.get("inputFormat", "monthlyPatient18"),
             "combinedMedicationSource": combined_medication_source,

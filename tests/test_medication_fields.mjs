@@ -12,6 +12,15 @@ const payload = {
   }],
 };
 assert.doesNotThrow(() => validateMedicationPlanFields(payload));
+for (const note of ["（疼痛时）", "（恶心时）", "（便秘时）", "(按需服用)", "（必要时）"]) {
+  const conditional = structuredClone(payload);
+  conditional.medicationItems[0].displayName = "测试药(商品名)";
+  conditional.medicationItems[0].singleDose = `10mg${note}`;
+  conditional.patients[0].medicationPlan = "测试药(商品名)10mg";
+  assert.doesNotThrow(() => validateMedicationPlanFields(conditional));
+  conditional.patients[0].medicationPlan += note;
+  assert.throws(() => validateMedicationPlanFields(conditional), /用药方案格式/);
+}
 for (const punctuation of ["。；", "；；", "，。", "、，", "！！", "?!", ".;", "：：", "。 \n；"]) {
   for (const precautions of [
     notes.replace("；合并用药", `${punctuation}合并用药`),

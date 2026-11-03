@@ -12,6 +12,15 @@ CLOCK = r"(?:[01][0-9]|2[0-3]):[0-5][0-9]"
 CLOCK_LIST = rf"{CLOCK}(?:、{CLOCK})*"
 
 
+def medication_plan_dose(value):
+    # Only the summary omits conditional notes; detailed dosing remains unchanged.
+    return re.sub(
+        r"\s*(?:（[^()（）]*(?:疼痛|恶心|呕吐|便秘|发热|发烧|失眠|症状|不适|按需|必要时|需要时|PRN)[^()（）]*）"
+        r"|\([^()（）]*(?:疼痛|恶心|呕吐|便秘|发热|发烧|失眠|症状|不适|按需|必要时|需要时|PRN)[^()（）]*\))",
+        "", str(value), flags=re.IGNORECASE,
+    ).strip()
+
+
 def normalize_precaution_punctuation(text):
     text = PRECAUTION_BOUNDARY_PUNCTUATION.sub("", text.strip())
     return REPEATED_PRECAUTION_PUNCTUATION.sub(lambda match: match.group()[-1], text)

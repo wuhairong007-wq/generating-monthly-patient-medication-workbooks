@@ -161,6 +161,14 @@ def parse_source_page(html, source_url, source_title, disease):
         "diseaseRationale": rationale,
         "evidence": [{"title": source_title or "白名单临床来源", "url": source_url, "scope": f"{disease}候选药及用法字段"}],
     }
+    # Preserve explicit source statements; route or drug name cannot establish discharge suitability.
+    for field, labels in (
+        ("careStage", ("careStage", "用药阶段")),
+        ("dischargeRationale", ("dischargeRationale", "出院用药依据")),
+    ):
+        value = _field(text, labels)
+        if value:
+            candidate[field] = value
     return [candidate], [], "parsed"
 
 

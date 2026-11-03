@@ -65,6 +65,14 @@ def patient(userid, disease, *, allergy="无", gender="男", age=60):
     }
 
 
+def discharge_medication(name, **kwargs):
+    return {
+        **medication(name, **kwargs),
+        "careStage": "postDischarge",
+        "dischargeRationale": "测试依据支持当前疾病康复出院后的该给药方案",
+    }
+
+
 def extracted(patients):
     return {
         "source": "/tmp/patients.xlsx",
@@ -418,10 +426,10 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         self.assertEqual(payload["meta"]["diseaseMedicationNamesByUserid"], {"u1": ["疾病药A", "疾病药B"]})
 
     def test_special_device_company_sets_consumable_name_and_excludes_product_from_prescription(self):
-        plans = [disease_plan("围手术期方案", ["腹腔粘连"], [
-            group("疾病药A", [medication("围手术期药A")]),
-            group("疾病药B", [medication("围手术期药B")]),
-            group("疾病药C", [medication("围手术期药C")]),
+        plans = [disease_plan("出院康复方案", ["腹腔粘连"], [
+            group("疾病药A", [discharge_medication("出院药A")]),
+            group("疾病药B", [discharge_medication("出院药B")]),
+            group("疾病药C", [discharge_medication("出院药C")]),
         ])]
         product_profile = profile(
             plans,
@@ -443,10 +451,10 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
         self.assertNotIn("测试耗材", payload["records"][0]["prescriptionList"])
 
     def test_special_device_company_rejects_product_name_inside_prescription_text(self):
-        plans = [disease_plan("围手术期方案", ["腹腔粘连"], [
-            group("疾病药A", [medication("围手术期药A", precautions="测试耗材配套使用")]),
-            group("疾病药B", [medication("围手术期药B")]),
-            group("疾病药C", [medication("围手术期药C")]),
+        plans = [disease_plan("出院康复方案", ["腹腔粘连"], [
+            group("疾病药A", [discharge_medication("出院药A", precautions="测试耗材配套使用")]),
+            group("疾病药B", [discharge_medication("出院药B")]),
+            group("疾病药C", [discharge_medication("出院药C")]),
         ])]
         product_profile = profile(
             plans,
@@ -520,6 +528,20 @@ class DiseaseSpecificPlansTest(unittest.TestCase):
             [item["displayName"] for item in payload["medicationItems"]],
             ["双歧杆菌四联活菌片(思连康)", "蒙脱石散", "口服补液盐I", "消旋卡多曲颗粒"],
         )
+
+    def test_medication_plan_omits_conditional_notes_but_preserves_drug_details(self):
+        plans = [disease_plan("脑梗死方案", ["脑梗死"], [
+            group("疾病机制A", [medication("疾病药A", single_dose="15mL（便秘时）")]),
+            group("疾病机制B", [medication("疾病药B", single_dose="10mg (恶心时)")]),
+        ])]
+        base = medication("测试产品", display_name="测试产品(商品名)", single_dose="0.5g（疼痛时）")
+        result, payload = self.run_generator(
+            [patient("u1", "脑梗死")], profile(plans, baseMedication=base))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(payload["patients"][0]["medicationPlan"],
+                         "测试产品(商品名)0.5g、疾病药A15mL、疾病药B10mg")
+        self.assertEqual(payload["medicationItems"][0]["singleDose"], "0.5g（疼痛时）")
+        self.assertIn("疼痛时", payload["records"][0]["prescriptionList"])
 
     def test_medication_plan_falls_back_to_drug_name(self):
         plans = [disease_plan("脑梗死方案", ["脑梗死"], [

@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 
 import openpyxl
-from test_disease_specific_plans import disease_plan, extracted, group, medication, patient, profile
+from test_disease_specific_plans import disease_plan, discharge_medication, extracted, group, medication, patient, profile
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -76,7 +76,7 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                         for plan in plans:
                             plan['minimumCombinedMedicationCount'] = 3
                             plan['minimumDiseaseMedicationCount'] = 3
-                            plan['medicationGroups'] = [group(f'组{i}', [medication(f'测试药{i}')]) for i in range(3)]
+                            plan['medicationGroups'] = [group(f'组{i}', [discharge_medication(f'测试药{i}')]) for i in range(3)]
                     for plan in plans:
                         for medication_group in plan["medicationGroups"]:
                             for candidate in medication_group["alternatives"]:
@@ -109,6 +109,19 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                     self.assertEqual(len(generated['meta']['surgerySimulationAudit']), 2 if product_type == '器械' else 0)
                     verify_args = ["--payload", payload_path, "--reminder", reminder, "--medication", meds, "--report", folder / "verify.json"]
                     self.run_script("verify_workbooks.mjs", *verify_args)
+                    if product_type == "器械":
+                        self.assertTrue(all(item["careStage"] == "postDischarge" for item in generated["medicationItems"]))
+                        generated["medicationItems"][0]["careStage"] = "inpatientOnly"
+                        inpatient_payload = folder / "inpatient-payload.json"
+                        inpatient_payload.write_text(json.dumps(generated, ensure_ascii=False))
+                        result = self.run_script(
+                            "verify_workbooks.mjs", "--payload", inpatient_payload,
+                            *verify_args[2:], success=False,
+                        )
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("test-a", result.stderr)
+                        self.assertIn("出院后", result.stderr)
+                        generated["medicationItems"][0]["careStage"] = "postDischarge"
                     workbook = openpyxl.load_workbook(reminder, data_only=True)
                     sheet = workbook.active
                     self.assertEqual(sheet.max_column, 18)
@@ -128,6 +141,8 @@ class WorkbookSurgeryColumnTest(unittest.TestCase):
                         self.assertEqual(sheet["M3"].value, "  测试候选药；\n测试产品  ")
                         self.assertEqual(sheet["M4"].value, "测试候选药")
                         self.assertEqual(sheet["O4"].value, "测试候选药10mg")
+                    else:
+                        self.assertEqual(sheet["M3"].value, "测试药0、测试药1、测试药2")
                     self.assertIn("A1:R1", {str(r) for r in sheet.merged_cells.ranges})
                     self.assertEqual(next(iter(sheet.tables.values())).ref, "A2:R4")
                     workbook.close()

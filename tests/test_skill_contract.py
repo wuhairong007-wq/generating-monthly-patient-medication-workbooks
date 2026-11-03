@@ -24,7 +24,26 @@ class SkillContractTest(unittest.TestCase):
 
     def test_skill_declares_semantic_version(self):
         frontmatter = self.skill.split("---", 2)[1]
-        self.assertIn('version: "1.22.12"', frontmatter)
+        self.assertIn('version: "1.24.1"', frontmatter)
+
+    def test_summary_plan_omits_conditional_notes_without_changing_dosing(self):
+        for document in (self.skill, self.contract, self.clinical_rules):
+            for phrase in ("（疼痛时）", "（恶心时）", "singleDose", "启用条件",
+                           "商品名括号", "剂量换算括号"):
+                self.assertIn(phrase, document)
+
+    def test_missing_medication_context_uses_audited_scenarios(self):
+        for document in (self.skill, self.contract, self.clinical_rules):
+            for field in ("allowMedicationSimulation", "medicationScenario", "assumptions",
+                          "rationale", "medicationSimulationAudit"):
+                self.assertIn(field, document)
+
+    def test_device_medications_target_post_discharge_recovery(self):
+        for document in (self.skill, self.contract, self.clinical_rules):
+            for phrase in ("出院后康复用药", "careStage", "postDischarge", "dischargeRationale"):
+                self.assertIn(phrase, document)
+            self.assertNotIn("疾病相关或围手术期药品", document)
+            self.assertNotIn("疾病相关/围手术期药品", document)
 
     def test_medication_precautions_and_clock_time_contract(self):
         for document in (self.skill, self.contract, self.clinical_rules):

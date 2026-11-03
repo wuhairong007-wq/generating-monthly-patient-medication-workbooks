@@ -5,10 +5,32 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 
-from search_disease_medications import search_candidates
+from search_disease_medications import parse_source_page, search_candidates
 
 
 class SearchDiseaseMedicationsTest(unittest.TestCase):
+    def test_preserves_explicit_discharge_fields_without_inferring_them(self):
+        page = (
+            "功能性便秘用于治疗。药品名称：测试药；规格：10mg；每次用量：10mg；"
+            "给药途径：口服；频次：每日1次；用药时间：08:00；疗程：7天；"
+            "饮食禁忌：测试饮食；合并用药：测试联用；用药观察：测试观察；储存保存：测试储存；"
+        )
+        for extra, expected in [
+            ("", {}),
+            ("用药阶段：postDischarge；出院用药依据：测试依据支持出院后7天口服治疗；",
+             {"careStage": "postDischarge", "dischargeRationale": "测试依据支持出院后7天口服治疗"}),
+            ("用药阶段：inpatientOnly；出院用药依据：仅住院治疗；",
+             {"careStage": "inpatientOnly", "dischargeRationale": "仅住院治疗"}),
+        ]:
+            with self.subTest(extra=extra):
+                candidates, _, _ = parse_source_page(
+                    page + extra, "https://www.nhc.gov.cn/test", "测试指南", "功能性便秘",
+                )
+                self.assertEqual(len(candidates), 1)
+                actual = {key: candidates[0][key] for key in ("careStage", "dischargeRationale")
+                          if key in candidates[0]}
+                self.assertEqual(actual, expected)
+
     def test_fetches_whitelist_page_and_parses_complete_candidate(self):
         search_html = """
         <html><body>

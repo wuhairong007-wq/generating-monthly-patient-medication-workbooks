@@ -163,7 +163,11 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 器械 profile 的 `surgeryRules` 结构：
 
-器械疾病方案的 `minimumCombinedMedicationCount` 和 `minimumDiseaseMedicationCount` 默认均为3，必须满足 `3 <= minimumDiseaseMedicationCount <= minimumCombinedMedicationCount <= 5`。每位患者至少3种不同的疾病相关/围手术期药品；器械本身不可列入 `combinedMedication` 或计数。较低配置直接拒绝，`medicationCountRationale`、`allowProductOnly` 和模拟模式均不能绕过器械门槛。生成器、工作簿构建器和最终验证器使用同一患者级数量要求。
+器械疾病方案的 `minimumCombinedMedicationCount` 和 `minimumDiseaseMedicationCount` 默认均为3，必须满足 `3 <= minimumDiseaseMedicationCount <= minimumCombinedMedicationCount <= 5`。每位患者至少3种不同的出院后康复用药，与当前疾病直接相关；器械本身不可列入 `combinedMedication` 或计数。较低配置直接拒绝，`medicationCountRationale`、`allowProductOnly` 和模拟模式均不能绕过器械门槛。生成器、工作簿构建器和最终验证器使用同一患者级数量要求。
+
+器械流程所有候选药在原有给药字段之外，必须提供 `careStage: "postDischarge"`、非空字符串 `dischargeRationale` 和非空 `evidence` 数组；每条依据的 `title`、`url`、`scope` 均为非空字符串，内容须支持当前疾病在出院后使用该具体给药方案。每个 `regimenVariants` 变体必须独立提供上述字段，不从基础药物继承出院后适用理由和依据。仅住院或术中适用的药品不能用于填充清单；不能从术式或剂型推断出院适用性。具体医学判断见临床生成规则“器械出院后康复用药”。
+
+自动检索候选执行同样要求；关联厂家来源还须保留原文及品种顺序，若所列药物与出院后阶段冲突或缺少依据，停止并报告userid及药名，不自动替药或补药。候选不足3种时仍停止，不用住院用药凑数。
 
 ```json
 [{"when": {"diseaseContainsAny": ["疾病"]}, "surgeryName": "规范手术名称"}]
@@ -187,6 +191,19 @@ schema v2 不得包含顶层 `baseCompanions` 或 `conditionalGroups`。疾病�
 
 ## Payload
 
+缺少出院用药资料时，可在 profile 设置 `allowMedicationSimulation: true`，并在相应疾病方案添加：
+
+```json
+{
+  "medicationScenario": {
+    "assumptions": ["与已知疾病相容、原表缺失的出院康复情景前提"],
+    "rationale": "各前提与用药指征的联系，以及不能作为真实病史或医嘱的边界"
+  }
+}
+```
+
+生成器要求显式开启用药情景，且 `allowSimulation` 不为 `false`。缺少假设或理由时拒绝；情景不绕过过敏、出院依据及器械数量校验。逐患者记录 `meta.medicationSimulationAudit`，每项包含 `userid`、`disease`、`planId`、`drugNames`、`assumptions`、`rationale`，并自动设置 `meta.simulation: true`。内部情景不合并进患者原始字段，不新增Excel列；最终文件内容不出现“模拟”，文件名和交付说明保留情景性质。真实记录模式禁止使用假设补全。
+
 `records` 中每个元素严格为：
 
 ```json
@@ -202,6 +219,8 @@ payload `meta` 必须包含非空 `companyName` 和 `consumableName`。当 `comp
 
 用药清单 payload 每行字段为：`userid、drugName、displayName、specification、singleDose、frequency、medicationTime、treatmentDays、precautions`。`displayName` 只允许使用 profile 中显式配置的非空字符串；未配置时生成器回退为 `drugName`，不得自行猜测商品名。工作簿逐药明细仍按既有列输出，不新增展示名称列。
 
+器械 payload 的每条 `medicationItems` 额外保留内部字段 `careStage: "postDischarge"`、`dischargeRationale`、`dischargeEvidence`；最后一项复制最终选中给药方案的 `evidence`，每条包含 `title`、`url`、`scope`。生成器逐患者检查所选药品及变体，工作簿构建器和最终验证器均检查上述字段，缺失或阶段不符时拒绝。提醒表“联合用药”、处方和逐药方案沿用同一批出院后康复用药，不新增Excel列。结构检查不代替临床来源核对，也不证明患者实际出院或已有相应医嘱。
+
 用药方案“注意事项”逐药按“饮食禁忌、合并用药、用药观察、储存保存”四个方面生成。profile 的 `precautions` 推荐使用以上四个中文键组成的对象，也接受按同样顺序带四项标题的文本；每项须为非空字符串，缺项、重复标题或空内容停止。生成器按固定顺序格式化为 `饮食禁忌：…；合并用药：…；用药观察：…；储存保存：…`，写入 `medicationItems[].precautions` 和13列表格M列，不新增四列。`regimenVariants[].precautions` 如覆盖，须提供完整四项；年龄/性别/过敏史/AE追加说明归入“用药观察”。自动检索候选也必须有四项来源内容，不能以通用审核文案补齐。
 
 各项均须依据实际药品、剂型的说明书/指南及患者资料核对，profile `evidence` 记录来源和支持范围，具体临床写作要求见临床生成规则“注意事项生成规则”。缺乏依据先补查，不把未知当作无风险，不编造忌口、相互作用、贮藏温度或开封期限。对象仅改善输入结构，不代表脚本自动验证了临床事实。
@@ -215,6 +234,8 @@ payload `meta` 必须包含非空 `companyName` 和 `consumableName`。当 `comp
 内部 `records[].combinedMedication` 按实际生成顺序列出全部 `drugName`，有几种就列几种。提醒表“联合用药”默认使用该列表；`meta.combinedMedicationSource=关联厂家用药` 时改为逐患者原样保留 `sourceCombinedMedication`。`patients[].medicationPlan` 仍按内部生成顺序列出全部“展示名称+每次用量”，使用中文顿号 `、` 连接，有几种就显示几种，例如：`双歧杆菌四联活菌片(思连康)1.0g、蒙脱石散3g、口服补液盐I5.125g、消旋卡多曲颗粒30mg`。
 
 用药方案字段不得包含“用药草案：”、性别、年龄、疾病、过敏史、审核说明或注意事项等长文本。安全与审核内容继续保留在逐药 `precautions` 和 `records[].prescriptionList`，不得因简化展示字段而删除。
+
+用药提醒的“用药方案”汇总字段不显示“（疼痛时）”“（恶心时）”“（便秘时）”“（按需服用）”等条件提示，兼容中英文括号；仅在拼接每次用量的展示文本时去除，不修改原始 `singleDose`、逐药明细、注意事项或处方中的启用条件。药名中的商品名括号及剂量换算括号保留。生成器、构建器和最终验证器执行相同展示规则。
 
 用药 payload 的 `meta` 必须包含兼容默认值 `minimumCombinedMedicationCount: 3`、`minimumDiseaseMedicationCount: 2`、`minimumUniqueMedicationPlanCount`、`uniqueMedicationPlanCount` 和 `diseaseMedicationNamesByUserid`。生成器还必须写入 `minimumCombinedMedicationCountByUserid` 、`minimumDiseaseMedicationCountByUserid` 和 `medicationCountRationaleByUserid`，以记录每位患者所匹配方案的实际门槛和降低门槛依据。构建器和最终验证器必须使用这些患者级值；映射缺失时回退到 3/2 兼容默认。其中去重目标按 `ceil(患者数/100)` 计算，仅作为推荐优先级；去重依据为药品、规格、剂量、频次、时段和疗程的完整给药方案。`meta` 还应记录 `uniqueMedicationPlanPriority`、`uniqueMedicationPlanTargetMet` 和 `uniqueMedicationPlanShortfall`。构建器和最终验证器必须重算实际去重数并校验元数据一致性，但不得因未达成推荐目标而失败。`diseaseMedicationNamesByUserid` 逐 userid 记录从当前患者唯一 `diseasePlan.medicationGroups` 选出的药名；复溶液、稀释液等直接产品辅助品不计入该映射。药品产品必须位于 `combinedMedication` 首项，且必须满足当前患者方案的最低疾病治疗药数，不得用无关药品补足。
 

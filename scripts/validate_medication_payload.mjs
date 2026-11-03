@@ -6,6 +6,13 @@ const SPECIAL_DEVICE_COMPANY = "商联医药(河南)有限公司（器械）";
 const PRECAUTION_SECTIONS = ["饮食禁忌", "合并用药", "用药观察", "储存保存"];
 const CLOCK_LIST = /^(?:[01][0-9]|2[0-3]):[0-5][0-9](?:、(?:[01][0-9]|2[0-3]):[0-5][0-9])*$/;
 
+export function medicationPlanDose(value) {
+  return String(value).replace(
+    /\s*(?:（[^()（）]*(?:疼痛|恶心|呕吐|便秘|发热|发烧|失眠|症状|不适|按需|必要时|需要时|PRN)[^()（）]*）|\([^()（）]*(?:疼痛|恶心|呕吐|便秘|发热|发烧|失眠|症状|不适|按需|必要时|需要时|PRN)[^()（）]*\))/gi,
+    "",
+  ).trim();
+}
+
 export function validateMedicationPresentation(item) {
   const label = `${item.userid}药品${item.drugName}`;
   assert(typeof item.medicationTime === "string" && CLOCK_LIST.test(item.medicationTime),
@@ -202,6 +209,16 @@ export function validateMedicationPlanFields(payload) {
       `${patient.userid}用药清单与联合用药不一致`,
     );
     for (const item of items) {
+      if (payload.meta?.productType === "器械") {
+        const label = `${patient.userid}药品${item.drugName}出院后康复用药`;
+        assert(item.careStage === "postDischarge", `${label}必须明确careStage=postDischarge`);
+        assert(typeof item.dischargeRationale === "string" && item.dischargeRationale.trim(),
+          `${label}缺少dischargeRationale`);
+        assert(Array.isArray(item.dischargeEvidence) && item.dischargeEvidence.length > 0
+          && item.dischargeEvidence.every(source => source && typeof source === "object"
+            && ["title", "url", "scope"].every(field => typeof source[field] === "string" && source[field].trim())),
+        `${label}必须保留包含title、url、scope的药品依据`);
+      }
       validateMedicationPresentation(item);
       assert(
         typeof item.displayName === "string" && item.displayName.trim() && item.displayName === item.displayName.trim(),
@@ -213,7 +230,7 @@ export function validateMedicationPlanFields(payload) {
       );
     }
     const expectedPlan = items
-      .map((item) => `${item.displayName}${String(item.singleDose).trim()}`)
+      .map((item) => `${item.displayName}${medicationPlanDose(item.singleDose)}`)
       .join("、");
     assert(
       patient.medicationPlan === expectedPlan,
